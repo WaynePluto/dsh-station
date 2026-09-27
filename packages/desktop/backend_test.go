@@ -14,13 +14,16 @@ func newTestManager() *backendManager {
 
 func TestApplyLineAcceptsStatusMessages(t *testing.T) {
 	manager := newTestManager()
-	manager.applyLine(`{"type":"status","protocol":1,"phase":"ready","detail":"就绪","urls":{"local":"http://127.0.0.1:30809/","admin":"http://127.0.0.1:30809/_admin","dsh":"http://127.0.0.1:3080/"},"adminReady":false}`)
+	manager.applyLine(`{"type":"status","protocol":1,"phase":"ready","detail":"就绪","urls":{"local":"http://127.0.0.1:30809/","admin":"http://127.0.0.1:30809/_admin","dsh":"http://127.0.0.1:3080/"},"adminReady":false,"dshToken":"tok_base64url","remoteEnabled":true}`)
 	status := manager.Status()
 	if status.Phase != phaseReady || !status.HasURLs || status.AdminReady {
 		t.Fatalf("状态解析错误: %+v", status)
 	}
 	if status.URLs.Local != "http://127.0.0.1:30809/" || status.URLs.Admin != "http://127.0.0.1:30809/_admin" {
 		t.Fatalf("URL 解析错误: %+v", status.URLs)
+	}
+	if status.DshToken != "tok_base64url" || !status.RemoteEnabled {
+		t.Fatalf("本机模式字段解析错误: dshToken=%q remoteEnabled=%v", status.DshToken, status.RemoteEnabled)
 	}
 	// 非 ready 阶段不带 urls 时不得残留上一阶段的 URL。
 	manager.applyLine(`{"type":"status","protocol":1,"phase":"restarting"}`)
@@ -50,18 +53,45 @@ func TestApplyLineHandlesStartupFailure(t *testing.T) {
 }
 
 func TestStatusHandlerRedirectsWhenReady(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
 	manager := newTestManager()
+	// 远程已按需启用（D25）且 relay 端口在监听：就绪后放行进 relay。
 	manager.setStatus(backendStatus{
-		Phase:   phaseReady,
-		HasURLs: true,
-		URLs:    backendURLs{Local: "http://127.0.0.1:30809/", Admin: "http://127.0.0.1:30809/_admin", Dsh: "http://127.0.0.1:3080/"},
+		Phase:         phaseReady,
+		HasURLs:       true,
+		RemoteEnabled: true,
+		URLs:          backendURLs{Local: "http://" + listener.Addr().String() + "/", Admin: "http://" + listener.Addr().String() + "/_admin", Dsh: "http://127.0.0.1:3080/"},
 	})
 	handler := statusHandler(manager)
 	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusFound || response.Header().Get("Location") != "http://127.0.0.1:30809/" {
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "http://"+listener.Addr().String()+"/" {
 		t.Fatalf("就绪后应 302 进本机 relay: %d %q", response.Code, response.Header().Get("Location"))
+	}
+}
+
+func TestStatusHandlerRedirectsDirectInLocalMode(t *testing.T) {
+	manager := newTestManager()
+	// 本机模式（D25）：远程未启用，dsh 就绪且 token 已上报，
+	// 初始导航直连 dsh 的 loopback 并代发一次 /?token= 交换。
+	manager.setStatus(backendStatus{
+		Phase:    phaseReady,
+		HasURLs:  true,
+		DshToken: "tok_base64url",
+		URLs:     backendURLs{Local: "http://127.0.0.1:3080/", Admin: "http://127.0.0.1:30809/_admin", Dsh: "http://127.0.0.1:3080/"},
+	})
+	handler := statusHandler(manager)
+	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	want := "http://127.0.0.1:3080/?token=tok_base64url"
+	if response.Code != http.StatusFound || response.Header().Get("Location") != want {
+		t.Fatalf("本机模式应 302 直连 dsh 并携带 token: %d %q", response.Code, response.Header().Get("Location"))
 	}
 }
 
@@ -89,23 +119,29 @@ func TestStatusHandlerRendersFailurePageImmediately(t *testing.T) {
 }
 
 func TestStatusHandlerHoldsUntilReady(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
 	manager := newTestManager()
 	handler := statusHandler(manager)
 	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/", nil)
-	// 在持有期间后台变为就绪：初始导航应被 302 放行进 relay。
+	// 在持有期间后台完成远程启用并就绪：初始导航应被 302 放行进 relay。
 	go func() {
-		for i := 0; i < 10 && manager.Status().Phase != phaseDsh; i++ {
+		for i := 0; i < 10 && manager.Status().Phase != phaseRemote; i++ {
 			time.Sleep(20 * time.Millisecond)
 		}
 		manager.setStatus(backendStatus{
-			Phase:   phaseReady,
-			HasURLs: true,
-			URLs:    backendURLs{Local: "http://127.0.0.1:30809/", Admin: "http://127.0.0.1:30809/_admin", Dsh: "http://127.0.0.1:3080/"},
+			Phase:         phaseReady,
+			HasURLs:       true,
+			RemoteEnabled: true,
+			URLs:          backendURLs{Local: "http://" + listener.Addr().String() + "/", Admin: "http://" + listener.Addr().String() + "/_admin", Dsh: "http://127.0.0.1:3080/"},
 		})
 	}()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusFound || response.Header().Get("Location") != "http://127.0.0.1:30809/" {
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "http://"+listener.Addr().String()+"/" {
 		t.Fatalf("持有期间就绪应 302 进 relay: %d %q", response.Code, response.Header().Get("Location"))
 	}
 }
@@ -117,16 +153,28 @@ func TestStatusHandlerRedirectsOnceRelayListens(t *testing.T) {
 	}
 	defer listener.Close()
 	manager := newTestManager()
-	// dsh 仍在启动（phaseDsh），但 relay 端口已监听：初始导航应立即放行，
-	// 剩余等待由 relay 自己的重试页承担。
+	// 「启用远程服务」进行中（phaseRemote）：初始导航继续持有；
+	// relay 端口监听且回到 ready 后立即放行，剩余等待由 relay 重试页承担。
 	manager.setStatus(backendStatus{
-		Phase:   phaseDsh,
-		HasURLs: true,
-		URLs:    backendURLs{Local: "http://" + listener.Addr().String() + "/", Admin: "http://" + listener.Addr().String() + "/_admin", Dsh: "http://127.0.0.1:3080/"},
+		Phase:         phaseRemote,
+		HasURLs:       true,
+		RemoteEnabled: true,
+		URLs:          backendURLs{Local: "http://" + listener.Addr().String() + "/", Admin: "http://" + listener.Addr().String() + "/_admin", Dsh: "http://127.0.0.1:3080/"},
 	})
 	handler := statusHandler(manager)
 	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/", nil)
 	response := httptest.NewRecorder()
+	go func() {
+		for i := 0; i < 10 && manager.Status().Phase != phaseRemote; i++ {
+			time.Sleep(20 * time.Millisecond)
+		}
+		manager.setStatus(backendStatus{
+			Phase:         phaseReady,
+			HasURLs:       true,
+			RemoteEnabled: true,
+			URLs:          backendURLs{Local: "http://" + listener.Addr().String() + "/", Admin: "http://" + listener.Addr().String() + "/_admin", Dsh: "http://127.0.0.1:3080/"},
+		})
+	}()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusFound || response.Header().Get("Location") != "http://"+listener.Addr().String()+"/" {
 		t.Fatalf("relay 监听后应 302 进本机 relay: %d %q", response.Code, response.Header().Get("Location"))

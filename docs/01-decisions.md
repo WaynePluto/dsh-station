@@ -25,7 +25,7 @@
 | D13 | dsh 作为 launcher 的 npm 依赖分发 | 绿色包保留真实 node_modules，用户不必另装 dsh |
 | D14 | 共用标准 DSH_HOME，仅隔离 dsh-station-web profile | 共享 settings、credentials、sessions 与用户全局 patch |
 | D15 | 非 loopback 浏览器请求统一登录 | 仅 loopback socket 与 loopback Host 同时成立才免登录 |
-| D16 | 每台机器运行 dsh、relay、connector | 任意机器可作为远程入口，关系单向且每机最多一个入口 |
+| D16 | 每台机器运行 dsh、relay、connector（桌面版例外见 D25） | 任意机器可作为远程入口，关系单向且每机最多一个入口 |
 | D17 | 扩展放在 `packages/plugins`，各包自行说明 | 功能组件通过 4 个组合 Bundle 与 6 个独立 Bundle 第三方分发；connection 注入和模型 HMR 启动屏障保留在同一个壳级 overlay |
 | D18 | Linux systemd 以个人普通用户运行整套 dsh-station | 默认 `~/.dsh-station` 保存 relay 运行数据，`~/.dsh` 保存官方 dsh 数据；普通操作使用用户权限，管理员操作由用户在交互终端输入 sudo，保留系统缓存；不主动建立 root shell |
 | D19 | 公网使用泛子域名，本机保留 loopback，裸域名只进管理入口 | `https://<机器名>.<域名>` 保持每台机器独立 origin；`http://127.0.0.1:<端口>` 始终是本机入口；域名模式默认关闭成员端口，新增机器不改 DNS、证书或 TLS 反代；域名模式的公网 Cookie 与本机 HTTP 的 host-only 辅助 Cookie 分开 |
@@ -34,6 +34,7 @@
 | D22 | 发行介质收敛为四个发布端：win/mac/linux 桌面版（每端 setup 安装包 + portable 便携 zip 两形态）与 Linux 服务版 zip（原绿色包，始终用系统 Node）；win/mac 不再提供绿色包。发布命令按发布端 × 变体拆分：`release`（本机全部）、`release:win\|mac\|linux:lite\|full`（linux 两变体均含服务版 zip，CI 的 linux 作业靠一条命令出全部 Linux 介质）与 `release:linux-server:lite\|full`（只打服务版 zip，可从任意平台交叉打包），统一入口 `scripts/release.mjs` | 会解压绿色包的用户必有 Node 或能自装；需要开箱即用的用户走桌面版，其中完整版附带 Node。原计划按平台实机验收后切换，2026-09-25 用户决定提前执行；mac/linux 桌面版实机验收仍按 S10 推进，不影响介质矩阵 |
 | D23 | 首次使用不强制创建管理员：本机 loopback 的 dsh 页面按免登录语义直接可用；只有首次打开管理控制台（远程能力入口）时才引导创建账号、密码与 TOTP。未初始化期间非 loopback 访问仍一律拒绝 | 远程只是工作站的一个能力，不使用远程就不该被设置向导挡住；认证边界不变（非 loopback 必须等设置完成且登录） |
 | D24 | 项目名 dsh-station（用户文案「DSH 工作站」）：数据目录默认 `~/.dsh-station`，dsh profile `dsh-station-web`；`remote` 一词只指远程能力（远程入口、remote-* 插件、/api/remote.mux） | 不保留对旧 dsh-remote 数据目录/配置文件名的运行时迁移（改名是一次性事件，历史数据由用户手动搬移）；relay.db 迁移合并为单一 CREATE 且版本号归一为 1，旧库（user_version 2–4，schema 与 v1 逐列一致）手工执行 PRAGMA user_version = 1 即可继续使用 |
+| D25 | 桌面版独立模式默认本机模式：只启动 dsh 与项目插件，不启动 relay/connector；远程能力由托盘「启用远程服务」按需启动（launcher 收 `start-remote` 后补起 relay + connector，进程退出即回收，下次启动仍是本机模式，不记忆状态）。CLI 与服务版不受影响，仍全量启动。本机入口由壳直连 dsh 的 loopback：dsh 的登录 token 经 desktop-link 状态行上报给壳，壳在初始导航 302 时代发一次 `/?token=` 交换，与 relay 代发的认证语义一致 | 不使用远程的桌面用户不该为 relay/connector 付常驻内存与本机监听端口（攻击面）；实测启动时间收益约 1 秒（relay/connector 本就不在 dsh 就绪关键路径），本决策以资源与安全收益为主（2026-09-28 用户确认）。dsh 仍 bind 127.0.0.1；「进入 dsh 只能靠初始导航 302」的壳安全模型不变，只是 302 的目标在远程未启用时指向带 token 的 dsh 直连地址 |
 
 ## 2.05 术语
 

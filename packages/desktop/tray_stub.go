@@ -11,7 +11,9 @@ type desktopTrayCallbacks struct {
 	onShow    func()
 	onBrowser func()
 	onAdmin   func()
-	onQuit    func()
+	// onRemote 对应「启用远程服务」（D25）：按需补起 relay + connector。
+	onRemote func()
+	onQuit   func()
 }
 
 type desktopTrayHandle struct{}

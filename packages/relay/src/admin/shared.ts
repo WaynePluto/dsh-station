@@ -228,13 +228,14 @@ ${options.body}
  * + `boot-page.module.css`）——同样的 HARNESS 字标、进度弧转圈与三元素卡片布局，
  * 色值即上方 token（dsh 启动页回退值与本表同源同值）。这样等待 → dsh 的
  * 「Loading plugins…」像是同一页只换了底部文字；进度弧固定在 dsh 的起始角 72°，
- * 交接瞬间两者视觉一致。仍然无脚本，自动重试靠 meta refresh（每秒重访 `/`，
+ * 交接瞬间两者视觉一致。仍然无脚本，自动重试靠 meta refresh（每 0.2 秒重访 `/`，
  * 上线后 relay 的下一次回答就是 303）。
  *
  * 两个对齐细节：dsh 启动页没有 box-sizing reset（content-box），20px 内容宽 +
  * 2px 边框的外径是 24px——本表 token 全局 border-box，因此写 24px 才与它等大；
- * 旋转周期取 1s，与 meta refresh 间隔一致——每次重载时上一圈恰好转满整数圈，
- * 相位归零不产生可见跳动（dsh 自己是 0.8s，交接后接管它的节奏）。
+ * 旋转周期保持 dsh 的 1s 量级（60Hz 下每帧约 6°，平滑）。0.2s 的重载会截断动画、
+ * 弧在起始角附近小幅步进——这是缩短上线延迟（平均省约 0.4 秒）换来的取舍；
+ * 交接到 dsh 后由它自己的 0.8s 节奏接管。
  * @param appearance 要渲染的外观。
  * @returns 独立的 HTML 文档。
  */
@@ -244,7 +245,7 @@ export function renderSplashPage(appearance: PageAppearance): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="1">
+<meta http-equiv="refresh" content="0.2">
 <title>DSH 工作站</title>
 ${ICON_LINKS}
 <style>

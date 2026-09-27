@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,28 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// enableRemoteThenOpenAdmin 触发按需启用远程（D25），等 relay 端口开始监听后
+// 在系统浏览器打开管理控制台；超时按当前已知地址打开，由用户自行重试。
+func enableRemoteThenOpenAdmin(ctx context.Context, manager *backendManager) {
+	manager.StartRemote()
+	admin := manager.Status().URLs.Admin
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		status := manager.Status()
+		if !status.HasURLs {
+			break
+		}
+		admin = status.URLs.Admin
+		if status.RemoteEnabled {
+			if parsed, err := url.Parse(admin); err == nil && tcpReachable(parsed.Host) {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	runtime.BrowserOpenURL(ctx, admin)
+}
 
 // bindingOrigin 返回追加进 BindingsAllowedOrigins 的页面来源。
 // 这只放行 Go 绑定调用（自绘条的外部打开等），不是导航白名单。
@@ -54,11 +77,16 @@ func assetHandler(manager *backendManager, attachRelayURL string) http.Handler {
 	return bootstrapHandler(attachRelayURL)
 }
 
+// trayTipText 是托盘悬停提示；本机模式（D25）显式标注远程未启用。
 func trayTipText(status backendStatus) string {
-	if status.HasURLs {
-		return fmt.Sprintf("DSH 工作站 · %s · %s", phaseLabel(status.displayPhase()), status.URLs.Local)
+	suffix := ""
+	if status.Phase != phaseFailed && status.Phase != phaseOffline && !status.RemoteEnabled {
+		suffix = " · 本机模式"
 	}
-	return "DSH 工作站 · " + phaseLabel(status.displayPhase())
+	if status.HasURLs {
+		return fmt.Sprintf("DSH 工作站 · %s · %s%s", phaseLabel(status.displayPhase()), status.URLs.Local, suffix)
+	}
+	return "DSH 工作站 · " + phaseLabel(status.displayPhase()) + suffix
 }
 
 func managerStatus(manager *backendManager) backendStatus {
@@ -134,7 +162,13 @@ func main() {
 	chrome := &Chrome{currentWindow: currentWindow, resolve: func() (string, string) {
 		if manager != nil {
 			if status := manager.Status(); status.HasURLs {
-				return status.URLs.Local, status.URLs.Admin
+				home := status.URLs.Local
+				// 本机模式（D25）：浏览器打开 dsh 直连地址需要代发一次 token
+				// 交换，否则是 dsh 自己的 401（loopback 也不豁免）。
+				if !status.RemoteEnabled && status.DshToken != "" {
+					home = strings.TrimSuffix(home, "/") + "/?token=" + status.DshToken
+				}
+				return home, status.URLs.Admin
 			}
 		}
 		return relayURL, adminURL
@@ -190,6 +224,10 @@ func main() {
 
 	if err := wails.Run(&options.App{
 		Title: windowTitle,
+		// 等待 relay/后台期间的窗口底色：与 dsh 启动页浅色 --page 同值（relay
+		// splash 的 rgb(249,250,251)），避免提前显示的窗口闪白刺眼。深色系统下
+		// 这层底色仍是浅色——它只覆盖初始导航被 hold 的短暂窗口。
+		BackgroundColour: &options.RGBA{R: 249, G: 250, B: 251, A: 255},
 		// 默认窗口取黄金比例（1618:1000≈1.618），在 1080p 下留出任务栏与边距；
 		// 页面以 body zoom=(高-36)/高 完整布局进自绘条以下区域。
 		Width:                  1360,
@@ -203,6 +241,11 @@ func main() {
 		AssetServer:            &assetserver.Options{Handler: assetHandler(manager, relayURL)},
 		OnStartup: func(ctx context.Context) {
 			window.Store(ctx)
+			// Wails 默认等首次导航完成（statusHandler/bootstrapHandler 放行
+			// 302 且首个页面加载完）才显示窗口，冷启动下用户会有数秒「点了
+			// 没反应」。WebView2 环境在本回调前已就绪，这里立即显示：hold
+			// 期间展示 BackgroundColour，之后由 relay 的进度页接管。
+			runtime.WindowShow(ctx)
 			installNotifyActivation(currentWindow)
 			if config.mode == modeStandalone {
 				startNotifyPipe(notifyToken, func(event notifyEvent) {
@@ -230,8 +273,19 @@ func main() {
 					runtime.BrowserOpenURL(ctx, home)
 				},
 				onAdmin: func() {
+					// 远程未启用时先按需补起（D25），等 relay 监听后再打开，
+					// 避免浏览器先吃到连接拒绝。
+					if manager != nil && !manager.Status().RemoteEnabled {
+						go enableRemoteThenOpenAdmin(ctx, manager)
+						return
+					}
 					_, admin := chrome.resolve()
 					runtime.BrowserOpenURL(ctx, admin)
+				},
+				onRemote: func() {
+					if manager != nil {
+						manager.StartRemote()
+					}
 				},
 				onQuit: func() {
 					if manager != nil {

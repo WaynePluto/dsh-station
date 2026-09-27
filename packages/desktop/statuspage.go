@@ -15,12 +15,14 @@ import (
 const bootstrapHoldSeconds = 150
 
 // statusHandler 是独立模式下 AssetServer 的唯一处理器。
-// webview 的初始导航是唯一能进入 relay 的入口：任何由页面发起的后续
+// webview 的初始导航是唯一能进入 dsh/relay 的入口：任何由页面发起的后续
 // 跳转（meta-refresh、JS location）都会带 Sec-Fetch-Site: cross-site，
-// 被 relay 的原始安全检查正确拒绝。因此这里「持有」初始请求，直到
-// relay 端口开始监听（launcher 先起 relay，dsh/connector 就绪前的等待
-// 由 relay 自己的重试页承担）就发一次 302；后台失败或超时才回答状态页，
-// 恢复方式是退出并重新打开（新壳拿到新的初始导航；托盘不再提供后台启停）。
+// 被入口的原始安全检查正确拒绝。因此这里「持有」初始请求，直到能给出
+// 一个可用的入口再 302：本机模式（D25，远程未启用）在 dsh 就绪且 token
+// 已上报时直连 dsh 的 loopback 并代发一次 /?token= 交换（与 relay 的
+// 首页 token 重定向语义一致）；远程已启用时等 relay 端口开始监听再进
+// relay（dsh/connector 就绪前的等待由 relay 自己的重试页承担）。后台
+// 失败或超时才回答状态页，恢复方式是退出并重新打开。
 func statusHandler(manager *backendManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -39,17 +41,23 @@ func statusHandler(manager *backendManager) http.Handler {
 				break
 			}
 			if status.Phase == phaseReady && status.HasURLs {
-				redirectToRelay(w, r, status.URLs.Local)
-				return
-			}
-			if status.HasURLs {
-				if relayHost == "" {
-					if parsed, err := url.Parse(status.URLs.Local); err == nil {
-						relayHost = parsed.Host
+				if status.RemoteEnabled {
+					// 远程已启用（或正在启用）：入口是 relay，等它开始监听；
+					// dsh/connector 就绪前的等待由 relay 自己的重试页承担。
+					if relayHost == "" {
+						if parsed, err := url.Parse(status.URLs.Local); err == nil {
+							relayHost = parsed.Host
+						}
 					}
-				}
-				if relayHost != "" && tcpReachable(relayHost) {
-					redirectToRelay(w, r, status.URLs.Local)
+					if relayHost != "" && tcpReachable(relayHost) {
+						redirectToEntry(w, r, status.URLs.Local)
+						return
+					}
+				} else if status.DshToken != "" {
+					// 本机模式：直连 dsh 的 loopback，代发一次 /?token= 交换
+					//（与 relay 的首页 token 重定向语义一致）；token 是
+					// base64url 字符集，可直接拼进查询串。
+					redirectToEntry(w, r, strings.TrimSuffix(status.URLs.Local, "/")+"/?token="+status.DshToken)
 					return
 				}
 			}
@@ -66,7 +74,7 @@ func statusHandler(manager *backendManager) http.Handler {
 	})
 }
 
-func redirectToRelay(w http.ResponseWriter, r *http.Request, local string) {
+func redirectToEntry(w http.ResponseWriter, r *http.Request, local string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	http.Redirect(w, r, local, http.StatusFound)
@@ -82,6 +90,8 @@ func phaseLabel(phase backendPhase) string {
 		return "正在启动 dsh"
 	case phaseReady:
 		return "就绪"
+	case phaseRemote:
+		return "正在启用远程服务"
 	case phaseRestarting:
 		return "正在按远程入口变更重启"
 	case phaseStopping:

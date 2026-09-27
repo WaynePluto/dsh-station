@@ -17,6 +17,9 @@ function memoryIo(): DesktopLinkIo & { written: string[]; feed(line: string): vo
     listen(onLine: (line: string) => void): void {
       handler = onLine
     },
+    close(): void {
+      handler = undefined
+    },
   }
 }
 
@@ -54,6 +57,23 @@ describe('desktop link', () => {
     expect(parsed.urls).toMatchObject({ local: 'http://127.0.0.1:30809/', admin: 'http://127.0.0.1:30809/_admin' })
   })
 
+  it('carries dshToken and remoteEnabled for the local-mode shell (D25)', () => {
+    const io = memoryIo()
+    const link = createDesktopLink(['--desktop'], io)
+    link.emit({
+      type: 'status',
+      protocol: 1,
+      phase: 'ready',
+      pid: 4242,
+      urls: { local: 'http://127.0.0.1:3080/', admin: 'http://127.0.0.1:30809/_admin', dsh: 'http://127.0.0.1:3080/' },
+      dshToken: 'tok_base64url',
+      remoteEnabled: false,
+    })
+    const parsed = JSON.parse(io.written[0]?.slice(DESKTOP_LINE_PREFIX.length) ?? '') as Record<string, unknown>
+    expect(parsed.dshToken).toBe('tok_base64url')
+    expect(parsed.remoteEnabled).toBe(false)
+  })
+
   it('dispatches stop commands and ignores malformed or unknown lines', () => {
     const io = memoryIo()
     const link = createDesktopLink(['--desktop'], io)
@@ -65,5 +85,15 @@ describe('desktop link', () => {
     io.feed('   ')
     io.feed('{"type":"stop"}')
     expect(commands).toEqual(['stop', 'stop'])
+  })
+
+  it('dispatches start-remote commands (D25)', () => {
+    const io = memoryIo()
+    const link = createDesktopLink(['--desktop'], io)
+    const commands: string[] = []
+    link.listen(command => commands.push(command.type))
+    io.feed('{"type":"start-remote"}')
+    io.feed('{"type":"stop"}')
+    expect(commands).toEqual(['start-remote', 'stop'])
   })
 })

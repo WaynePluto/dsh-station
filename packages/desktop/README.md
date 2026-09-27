@@ -1,13 +1,18 @@
 # DSH 工作站桌面应用（packages/desktop）
 
-Wails v2.16.0 + Go 原生层的桌面壳：托管自己的 Node launcher 后台（dsh + relay + connector），
-内置 WebView 直连本机 relay origin，并常驻托盘。两种运行模式：
+Wails v2.16.0 + Go 原生层的桌面壳：托管自己的 Node launcher 后台，内置 WebView，
+并常驻托盘。两种运行模式：
 
-- **独立模式（默认）**：双击即用。发现随包载荷（`package/`）与随包/系统 Node 后，
-  以 `--desktop` 拉起 launcher，AssetServer 常驻「启动/故障状态页」，后台就绪后对根路径
-  一次 HTTP 302 进入真实 relay origin；业务流量不走 AssetServer。托盘提供
-  **显示 / 在浏览器中打开 → 工作台、远程管理 / 启动后台 / 停止后台 / 重启后台 / 退出**，悬停提示显示阶段。
-  退出（托盘）与崩溃（Windows Job Object KILL_ON_JOB_CLOSE）都会回收自有后台进程树。
+- **独立模式（默认）**：双击即用，默认**本机模式（D25）**——launcher 只启动 dsh 与
+  项目插件（不启动 relay/connector）；发现随包载荷（`package/`）与随包/系统 Node 后，
+  以 `--desktop` 拉起 launcher，AssetServer 常驻「启动/故障状态页」，dsh 就绪且 token
+  上报后对根路径一次 HTTP 302 直连 dsh 的 loopback（携带 `/?token=` 代发交换，与 relay
+  的首页 token 重定向语义一致）；业务流量不走 AssetServer。远程能力由托盘
+  **「启用远程服务」** 按需启用：launcher 补起 relay + connector，本机入口切回 relay，
+  退出即回收、下次启动仍是本机模式。托盘提供
+  **显示 / 在浏览器中打开 → 工作台、远程管理 / 启用远程服务 / 退出**，悬停提示显示
+  阶段与本机模式标注。退出（托盘）与崩溃（Windows Job Object KILL_ON_JOB_CLOSE）
+  都会回收自有后台进程树。
 - **attach 开发模式（`--attach`）**：附着到已运行的 31809 开发栈（独立 home
   `~/.dsh-station-dev` + `~/.dsh-dev`，可与发行版实例同时运行），不管理它的进程；
   窗口与自绘条标题带「 (dev)」后缀以便和发行版实例区分；无通知管道令牌，
@@ -21,7 +26,7 @@ Wails v2.16.0 + Go 原生层的桌面壳：托管自己的 Node launcher 后台�
 ## 命令
 
 ```powershell
-pnpm dev:desktop                 # attach 开发模式（31809 栈未运行时自动拉起开发栈；壳立即启动，relay 监听即开窗，等待期显示 relay 进度页；壳退出时停掉自己拉起的栈，外部启动的栈不受影响）
+pnpm dev:desktop                 # attach 开发模式（31809 栈未运行时自动拉起开发栈；壳产物按源码 mtime 缓存、未变化不重新链接，WebView2 就绪即开窗，等待期显示窗口底色与 relay 进度页；壳退出时停掉自己拉起的栈，外部启动的栈不受影响）
 pnpm dev:desktop -- --selfcheck  # 只检查参数，不创建窗口
 pnpm release:win:lite            # 只打 Windows 桌面轻量版（setup + 便携 zip；不下载随包 Node）
 pnpm release:win:full            # 只打 Windows 桌面完整版（首次下载随包 Node，之后走缓存）
@@ -49,9 +54,11 @@ dsh-station.exe --app-dir <目录> --selfcheck   # 开发时校验自定义载�
 launcher 以 `--desktop` 运行时（`packages/launcher/src/desktop-link.ts`）：
 
 - 状态：stdout 每行 `@@DSH_STATION {json}`（protocol 1；phase = config/plugins/dsh/relay/
-  ready/restarting/stopping/failed，urls.local/admin/dsh，adminReady）。Go 侧镜像在
+  remote/ready/restarting/stopping/failed，urls.local/admin/dsh，adminReady，dshToken
+  （本机模式下壳代发 `/?token=` 交换，不落日志），remoteEnabled）。Go 侧镜像在
   `backend.go`，两端由测试锁定（`tests/desktop-link.spec.ts` / `backend_test.go`）。
-- 控制：stdin 逐行 JSON 命令，目前只有 `{"type":"stop"}`；重启由桌面壳停止后重新拉起。
+- 控制：stdin 逐行 JSON 命令：`{"type":"stop"}` 与
+  `{"type":"start-remote"}`（D25 按需启用 relay + connector，幂等）；重启由桌面壳停止后重新拉起。
 - 实例锁：home 下 `launcher.lock`（pid 存活检查），先于插件同步与数据库写入获取。
 - 通知管道：桌面壳监听 `127.0.0.1:30810`，首行必须携带共享令牌
   （桌面壳生成 `DSH_STATION_NOTIFY_TOKEN`，经 launcher → dsh 环境传给 notify 插件）；

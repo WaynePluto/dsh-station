@@ -96,15 +96,18 @@ const (
 	desktopTrayShow = iota + 1
 	desktopTrayBrowser
 	desktopTrayAdmin
+	desktopTrayStartRemote
 	desktopTrayQuit
 )
 
 // desktopTrayCallbacks 是托盘菜单触发的全部动作。后台启停不在托盘：
 // 退出重开即等价于重启，失败页文案直接引导（见 statuspage.go）。
+// 「启用远程服务」是本机模式（D25）按需补起 relay + connector 的唯一入口。
 type desktopTrayCallbacks struct {
 	onShow    func()
 	onBrowser func()
 	onAdmin   func()
+	onRemote  func()
 	onQuit    func()
 }
 
@@ -173,6 +176,7 @@ type desktopTrayState struct {
 	onShow         func()
 	onBrowser      func()
 	onAdmin        func()
+	onRemote       func()
 	onQuit         func()
 }
 
@@ -330,7 +334,13 @@ func (tray *desktopTrayState) init() (err error) {
 		return err
 	}
 	if ok, _, callErr := desktopTrayAppendMenu.Call(tray.menu, desktopTrayMFSeparator, 0, 0); ok == 0 {
-		return desktopTrayError("AppendMenuW", callErr)
+		desktopTrayError("AppendMenuW", callErr)
+	}
+	if err = appendDesktopTrayMenu(tray.menu, desktopTrayMFString, desktopTrayStartRemote, "启用远程服务"); err != nil {
+		return err
+	}
+	if ok, _, callErr := desktopTrayAppendMenu.Call(tray.menu, desktopTrayMFSeparator, 0, 0); ok == 0 {
+		desktopTrayError("AppendMenuW", callErr)
 	}
 	if err = appendDesktopTrayMenu(tray.menu, desktopTrayMFString, desktopTrayQuit, "退出"); err != nil {
 		return err
@@ -351,6 +361,8 @@ func (tray *desktopTrayState) invoke(id uintptr) {
 		callback = tray.onBrowser
 	case desktopTrayAdmin:
 		callback = tray.onAdmin
+	case desktopTrayStartRemote:
+		callback = tray.onRemote
 	case desktopTrayQuit:
 		callback = tray.onQuit
 	}
@@ -567,7 +579,7 @@ func startWindowsTray(callbacks desktopTrayCallbacks) (*desktopTrayHandle, error
 		defer close(done)
 		tray := &desktopTrayState{
 			onShow: callbacks.onShow, onBrowser: callbacks.onBrowser, onAdmin: callbacks.onAdmin,
-			onQuit: callbacks.onQuit,
+			onRemote: callbacks.onRemote, onQuit: callbacks.onQuit,
 		}
 		if err := tray.init(); err != nil {
 			ready <- startup{err: err}

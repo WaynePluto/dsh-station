@@ -24,6 +24,7 @@ const (
 	phaseDsh        backendPhase = "dsh"
 	phaseRelay      backendPhase = "relay"
 	phaseReady      backendPhase = "ready"
+	phaseRemote     backendPhase = "remote"
 	phaseRestarting backendPhase = "restarting"
 	phaseStopping   backendPhase = "stopping"
 	phaseFailed     backendPhase = "failed"
@@ -51,6 +52,11 @@ type backendWireMessage struct {
 	Urls       backendURLs  `json:"urls"`
 	AdminReady bool         `json:"adminReady"`
 	Message    string       `json:"message"`
+	// DshToken 只经 stdout 管道传输；本机模式（远程未启用）下壳在初始导航
+	// 302 与「在浏览器中打开」时代发一次 dsh 的 /?token= 交换（D25）。
+	DshToken string `json:"dshToken"`
+	// RemoteEnabled 表示 relay + connector 已按需启用；此后 URLs.Local 指向 relay。
+	RemoteEnabled bool `json:"remoteEnabled"`
 }
 
 // backendStatus 是 tray/状态页消费的快照；字段全部只读。
@@ -60,6 +66,9 @@ type backendStatus struct {
 	HasURLs    bool
 	URLs       backendURLs
 	AdminReady bool
+	DshToken   string
+	// RemoteEnabled 且 relay 可达时走 relay 入口；否则 ready + DshToken 直连 dsh。
+	RemoteEnabled bool
 }
 
 func (s backendStatus) displayPhase() backendPhase {
@@ -224,7 +233,13 @@ func (m *backendManager) applyLine(payload string) {
 	m.mu.Lock()
 	switch message.Type {
 	case "status":
-		status := backendStatus{Phase: message.Phase, Detail: message.Detail, AdminReady: message.AdminReady}
+		status := backendStatus{
+			Phase:         message.Phase,
+			Detail:        message.Detail,
+			AdminReady:    message.AdminReady,
+			DshToken:      message.DshToken,
+			RemoteEnabled: message.RemoteEnabled,
+		}
 		if message.Urls.Local != "" {
 			status.HasURLs = true
 			status.URLs = message.Urls
@@ -261,6 +276,19 @@ func (m *backendManager) awaitExit(command *exec.Cmd, exited chan struct{}) {
 	if m.onChange != nil {
 		m.onChange(snapshot)
 	}
+}
+
+// StartRemote 请求按需启用远程服务（D25）：launcher 补起 relay + connector。
+// 后台不在运行时是空操作（托盘项只在后台存活时可用）。
+func (m *backendManager) StartRemote() {
+	m.mu.Lock()
+	command := m.cmd
+	stdin := m.stdin
+	m.mu.Unlock()
+	if command == nil || stdin == nil {
+		return
+	}
+	_, _ = stdin.Write([]byte("{\"type\":\"start-remote\"}\n"))
 }
 
 // Stop 请求后台优雅退出，超过宽限期按平台兜底杀死进程树。幂等。

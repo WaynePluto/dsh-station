@@ -364,7 +364,7 @@ describe('M2.5 admin console', () => {
       expect(local.headers['content-type']).toContain('text/html')
       expect(local.body).toContain('正在启动 DSH 工作站')
       expect(local.body).toContain('class="spin"')
-      expect(local.body).toContain('<meta http-equiv="refresh" content="1">')
+      expect(local.body).toContain('<meta http-equiv="refresh" content="0.2">')
       // 启动等待是应用体验的一部分：不得出现管理页的痕迹。
       expect(local.body).not.toContain('当前离线')
       expect(local.body).not.toContain(ADMIN_PATH_PREFIX)

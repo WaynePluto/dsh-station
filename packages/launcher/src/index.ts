@@ -120,6 +120,10 @@ export async function run(argv: readonly string[]): Promise<number> {
   /** 桌面状态：URL 与管理员状态一旦确定就随每次阶段上报携带。 */
   let desktopUrls: DesktopUrls | undefined
   let desktopAdminReady: boolean | undefined
+  /** 本机模式（D25）：桌面壳托管时默认不启动 relay/connector，远程按需启用。CLI 全量。 */
+  const localMode = desktop.enabled
+  /** 本机模式下已捕获的 dsh token：start-remote 时给 connector，emit 时给壳代发。 */
+  let dshTokenValue: string | undefined
   const emit = (phase: DesktopPhase, detail?: string): void => {
     desktop.emit({
       type: 'status',
@@ -129,6 +133,8 @@ export async function run(argv: readonly string[]): Promise<number> {
       ...detail === undefined ? {} : { detail },
       ...desktopUrls === undefined ? {} : { urls: desktopUrls },
       ...desktopAdminReady === undefined ? {} : { adminReady: desktopAdminReady },
+      ...dshTokenValue === undefined ? {} : { dshToken: dshTokenValue },
+      remoteEnabled: remoteStarted,
     })
   }
 
@@ -139,8 +145,13 @@ export async function run(argv: readonly string[]): Promise<number> {
   say(configPath === undefined ? '没有找到配置文件，使用默认配置。' : `已读取配置 ${configPath}`)
 
   const lock: InstanceLock = acquireInstanceLock(config.home)
+  /** 本机模式下远程服务是否已按需启用（D25）；emit 的每次 status 都携带。 */
+  let remoteStarted = false
   desktopUrls = {
-    local: `http://127.0.0.1:${String(config.relay.port)}/`,
+    // 本机模式：local 先指 dsh 直连地址（壳用它代发 token 交换）；启用远程后切回 relay。
+    local: localMode
+      ? `http://127.0.0.1:${String(config.dsh.port)}/`
+      : `http://127.0.0.1:${String(config.relay.port)}/`,
     admin: `http://127.0.0.1:${String(config.relay.port)}/_admin`,
     dsh: `http://127.0.0.1:${String(config.dsh.port)}/`,
   }
@@ -192,11 +203,14 @@ export async function run(argv: readonly string[]): Promise<number> {
   say(`dsh 插件：壳级注入 ${SHELL_PLUGIN_PACKAGE_NAMES.join('、')}；第三方 Bundle ${String(DISTRIBUTION_PACKAGE_NAMES.length)} 个`)
 
   // 从不写入日志：此密钥会签名每个控制台会话。
-  const jwtSecret = loadOrCreateJwtSecret(
-    jwtSecretFilePath(config.home),
-    message => console.warn(`[dsh-station] ${message}`),
-  )
-  const relayEnv: NodeJS.ProcessEnv = { ...process.env, [JWT_SECRET_ENV_NAME]: jwtSecret }
+  // 本机模式（D25）延后到启用远程时再创建：只用 dsh 的用户不需要这个文件。
+  const loadJwtSecret = (): NodeJS.ProcessEnv => {
+    const jwtSecret = loadOrCreateJwtSecret(
+      jwtSecretFilePath(config.home),
+      message => console.warn(`[dsh-station] ${message}`),
+    )
+    return { ...process.env, [JWT_SECRET_ENV_NAME]: jwtSecret }
+  }
 
   let shuttingDown = false
   // membership 监视器创建后赋值；shutdown 先释放它，退出路径上不再触发 dsh 重启。
@@ -216,6 +230,9 @@ export async function run(argv: readonly string[]): Promise<number> {
     if (shuttingDown) return
     shuttingDown = true
     emit('stopping')
+    // stdin 是活跃 handle：不先关掉，事件循环会在所有子进程回收后仍挂住
+    // （进程迟迟不退，桌面壳只能等宽限期后强杀）。
+    desktop.close()
     stopTrustWatcher?.()
     // 按反向启动顺序停止：connector 在它拨号的 relay 消失前停止拨号，
     // dsh 随后退出，最先启动的隧道枢纽 relay 最后回收。
@@ -223,11 +240,6 @@ export async function run(argv: readonly string[]): Promise<number> {
     lock.release()
     settle?.(code)
   }
-  // 桌面壳通过 stdin 下发停止命令；CLI 模式的 stdin 无人监听，不会触发。
-  desktop.listen((command) => {
-    if (command.type === 'stop') void shutdown(0)
-  })
-
   // 在第一个子进程存在前就注册：启动期间的 Ctrl+C 也必须
   // 停止子进程，而不是让它们成为孤儿。
   const onSignal = (): void => { void shutdown(0) }
@@ -269,6 +281,7 @@ export async function run(argv: readonly string[]): Promise<number> {
         const token = dshTokenFromLine(line)
         if (token === undefined) return
         dshTokenSeen = true
+        dshTokenValue = token
         noteDshToken?.(token)
       },
     })
@@ -277,20 +290,26 @@ export async function run(argv: readonly string[]): Promise<number> {
   // 初始导航，插件同步（首次或介质内容变化时约 15 秒）与 dsh 就绪前的等待
   // 由 relay 自己的重试页承担。relay 不依赖 profile/插件状态，先起没有
   // 顺序风险；connector 仍等 dsh 的登录 token。
-  emit('relay')
-  supervisor.start({
-    name: RELAY_CHILD,
-    command: process.execPath,
-    args: relayArguments(relayEntry, {
-      host: config.relay.host,
-      port: config.relay.port,
-      slug: config.relay.slug,
-      ...config.relay.domain === undefined ? {} : { domain: config.relay.domain },
-      data: config.relay.data,
-      home: config.home,
-    }),
-    env: relayEnv,
-  })
+  // 本机模式（D25）跳过：relay 与 connector 由「启用远程服务」按需补起。
+  const startRelayChild = (): void => {
+    supervisor.start({
+      name: RELAY_CHILD,
+      command: process.execPath,
+      args: relayArguments(relayEntry, {
+        host: config.relay.host,
+        port: config.relay.port,
+        slug: config.relay.slug,
+        ...config.relay.domain === undefined ? {} : { domain: config.relay.domain },
+        data: config.relay.data,
+        home: config.home,
+      }),
+      env: loadJwtSecret(),
+    })
+  }
+  if (!localMode) {
+    emit('relay')
+    startRelayChild()
+  }
 
   if (config.dsh.profile === 'dsh-station-web') {
     emit('plugins')
@@ -358,7 +377,7 @@ export async function run(argv: readonly string[]): Promise<number> {
       ...loginToken === undefined ? {} : { env: { ...process.env, [DSH_TOKEN_ENV_NAME]: loginToken } },
     })
   }
-  startConnectorChild(token)
+  if (!localMode) startConnectorChild(token)
 
   // membership 变化改变 dsh 必须信任的地址集合时自动重启 dsh，并连带重启
   // connector 上报新 token；relay 与本机地址不变，无需重启。进度写入
@@ -459,13 +478,13 @@ export async function run(argv: readonly string[]): Promise<number> {
 
   // 拒绝配置的 relay 会在几毫秒内退出；此时打印
   // banner 会把唯一有用的错误行埋掉。
-  let adminReady = false
-  if (!shuttingDown) {
+  // 本机模式（D25）不打印 banner：relay 未监听，地址块只会误导。
+  if (!localMode && !shuttingDown) {
     // 在这里询问而不是启动时询问：新机器上 relay 会自己创建
     // 数据库，因此更早的回答会对一个尚不存在的文件说“没有管理员”。
     // 不可读数据库与缺失数据库含义相同：
     // 仍需在浏览器中完成设置。
-    adminReady = relayAdminInitialized(config.relay.data)
+    const adminReady = relayAdminInitialized(config.relay.data)
     console.log(renderBanner({
       dshPort: config.dsh.port,
       relayPort: config.relay.port,
@@ -476,8 +495,40 @@ export async function run(argv: readonly string[]): Promise<number> {
       hub,
       adminReady,
     }))
+    desktopAdminReady = adminReady
+  } else if (localMode) {
+    say('本机模式：远程服务未启动；从桌面壳托盘「启用远程服务」按需启用。')
   }
-  desktopAdminReady = adminReady
+
+  /**
+   * 按需启用远程服务（D25，幂等）：补起 relay 与 connector，本机入口切回
+   * relay。connector 自带指数退避重连，relay 冷启动期间的首拨失败会自行
+   * 恢复；进程退出即回收，下次启动仍是本机模式，不记忆该状态。
+   */
+  const startRemoteServices = (): void => {
+    if (remoteStarted || shuttingDown) return
+    remoteStarted = true
+    emit('remote', '正在启用远程服务（relay + connector）')
+    say('正在启用远程服务（relay + connector）……')
+    startRelayChild()
+    startConnectorChild(dshTokenValue)
+    desktopUrls = {
+      local: `http://127.0.0.1:${String(config.relay.port)}/`,
+      admin: `http://127.0.0.1:${String(config.relay.port)}/_admin`,
+      dsh: `http://127.0.0.1:${String(config.dsh.port)}/`,
+    }
+    desktopAdminReady = relayAdminInitialized(config.relay.data)
+    say(`远程入口：http://127.0.0.1:${String(config.relay.port)}/`)
+    emit('ready', '远程服务已启用')
+  }
+
+  // 控制命令在全部启动函数就绪后注册（避免启动早期命令触发未初始化闭包）；
+  // 壳异常退出时由 Job Object 回收整棵后台进程树，早于注册的停止需求不悬空。
+  desktop.listen((command) => {
+    if (command.type === 'stop') void shutdown(0)
+    else if (command.type === 'start-remote') startRemoteServices()
+  })
+
   emit('ready')
   return finished
 }

@@ -18,7 +18,7 @@
 | 控制面协议 | `packages/protocol/src/index.ts` | 控制帧/schema、编解码、挑战签名消息、membership 与 dsh 重启状态文件契约、版本及超时 | zod；不依赖其他 workspace 包 |
 | Connector | `packages/connector/src/cli.ts`、`connector.ts` | Ed25519 身份、membership 监听、控制信道、回拨数据流、退避与致命退出 | protocol、ws、pino、Node net/crypto/fs |
 | Relay | `packages/relay/src/cli.ts`、`server.ts` | 浏览器/设备认证、管理页面、机器路由、HTTP/WS 转发、隧道注册表 | protocol、ws、hono、jose、otplib、pino、node:sqlite |
-| Launcher | `packages/launcher/src/index.ts` | 配置、profile 初始化、第三方插件首次安装/配套升级、产物定位、trusted host、membership 信任变化时自动重启 dsh、三个子进程的启动与监督 | protocol、commander、zod、官方 plugin-manager；manifest 携带 dsh、relay、connector 与壳级 overlay，不再携带功能插件作为安装锚 |
+| Launcher | `packages/launcher/src/index.ts` | 配置、profile 初始化、第三方插件首次安装/配套升级、产物定位、trusted host、membership 信任变化时自动重启 dsh、子进程的启动与监督；`--desktop` 默认本机模式（D25，只起 dsh，`start-remote` 命令按需补起 relay + connector），CLI 全量 | protocol、commander、zod、官方 plugin-manager；manifest 携带 dsh、relay、connector 与壳级 overlay，不再携带功能插件作为安装锚 |
 | 纯浏览器 UI 辅助 | `packages/plugin-ui/src/index.ts` 及职责文件 | dialog 几何/pointer 生命周期、导航图标、Inspector/dock 样式、共享测试纯函数；不注册 dsh service | React 类型/运行时 external；被插件 browser bundle 内联 |
 | 设置与模型插件（7） | `packages/plugins/{agents-md,proxy,copilot-auth,models-catalog,model-capabilities,favorite-models,notify}` | 全局提示词、出网代理、模型登录/目录/能力/收藏、桌面通知 | dsh 设置/连接/槽位；代理用 undici，模型目录用 pi-ai |
 | 会话插件（3） | `packages/plugins/{turn-retry,chat-scroll,user-message-fork}` | 重试、滚动、用户消息分叉 | dsh 会话/投影/浏览器 UI；仅 turn-retry 有实质宿主业务 |
