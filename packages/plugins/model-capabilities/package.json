@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-model-capabilities",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "为模型声明图片输入、推理等级与单模型协议覆盖。",
   "license": "MIT",
   "private": true,

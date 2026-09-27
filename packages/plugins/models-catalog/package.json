@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-models-catalog",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "从模型目录检查并应用模型元数据，同时保留用户配置。",
   "license": "MIT",
   "private": true,

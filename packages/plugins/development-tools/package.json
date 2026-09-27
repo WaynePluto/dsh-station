@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-development-tools",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "整合常驻服务、交互终端、工具状态与技能状态的开发工具 Bundle。",
   "license": "MIT",
   "private": true,
@@ -15,10 +15,10 @@
     "locale"
   ],
   "dependencies": {
-    "@dsh-station/dsh-plugin-services": "workspace:0.0.2-20260927",
-    "@dsh-station/dsh-plugin-terminal": "workspace:0.0.2-20260927",
-    "@dsh-station/dsh-plugin-tools-inspector": "workspace:0.0.2-20260927",
-    "@dsh-station/dsh-plugin-skills-inspector": "workspace:0.0.2-20260927"
+    "@dsh-station/dsh-plugin-services": "workspace:0.0.2-20260928",
+    "@dsh-station/dsh-plugin-terminal": "workspace:0.0.2-20260928",
+    "@dsh-station/dsh-plugin-tools-inspector": "workspace:0.0.2-20260928",
+    "@dsh-station/dsh-plugin-skills-inspector": "workspace:0.0.2-20260928"
   },
   "exports": {
     "./package.json": "./package.json",

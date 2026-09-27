@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-agents-md",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "在 dsh 设置中查看和编辑全局 AGENTS.md 提示词。",
   "license": "MIT",
   "private": true,
@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-home-paths": "0.1.7-rc.2",
-    "@dsh-station/plugin-ui": "workspace:0.0.2-20260927"
+    "@dsh-station/plugin-ui": "workspace:0.0.2-20260928"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

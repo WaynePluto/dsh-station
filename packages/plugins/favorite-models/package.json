@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-favorite-models",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "常用模型：为聊天输入框提供可配置的模型过滤。",
   "license": "MIT",
   "private": true,

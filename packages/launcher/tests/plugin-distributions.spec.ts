@@ -37,7 +37,7 @@ describe('plugin installation media', () => {
     const manifest = JSON.parse(readFileSync(join(group, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>
     }
-    expect(manifest.dependencies['@dsh-station/dsh-plugin-turn-retry']).toBe('0.0.2-20260927')
+    expect(manifest.dependencies['@dsh-station/dsh-plugin-turn-retry']).toBe('0.0.2-20260928')
     expect(JSON.stringify(manifest)).not.toContain('workspace:')
   })
 

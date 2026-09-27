@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-files",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "增强工作区文件浏览，提供 Git 状态、临时预览、图片缩放和路径复制。",
   "license": "MIT",
   "private": true,

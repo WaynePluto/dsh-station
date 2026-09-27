@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-concise-mode",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "为 dsh 提供 concise 与 concise-ptc 两个简洁 Agent 预设。",
   "license": "MIT",
   "private": true,

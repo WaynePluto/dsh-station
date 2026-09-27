@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-remote-experience",
-  "version": "0.0.2-20260927",
+  "version": "0.0.2-20260928",
   "description": "整合远程设置与浏览器兼容能力的远程体验 Bundle。",
   "license": "MIT",
   "private": true,
@@ -15,8 +15,8 @@
     "locale"
   ],
   "dependencies": {
-    "@dsh-station/dsh-plugin-remote-settings": "workspace:0.0.2-20260927",
-    "@dsh-station/dsh-plugin-browser-compat": "workspace:0.0.2-20260927"
+    "@dsh-station/dsh-plugin-remote-settings": "workspace:0.0.2-20260928",
+    "@dsh-station/dsh-plugin-browser-compat": "workspace:0.0.2-20260928"
   },
   "exports": {
     "./package.json": "./package.json",
