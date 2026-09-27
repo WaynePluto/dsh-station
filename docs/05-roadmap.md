@@ -17,7 +17,7 @@
 - [x] 首次免设置（D23）：relay 未初始化时 loopback 业务直达 dsh，仅管理页（`/_admin`）与登录页被引导到设置向导；非 loopback 访问仍一律拒绝。已在桌面独立模式实机验证（无管理员首次打开直接进入 dsh）。
 - [x] 项目改名 dsh-station（D24）：包名、profile（dsh-station-web）、数据目录（~/.dsh-station）、Go module、图标与用户文案（DSH 工作站）完成迁移；不保留对旧 dsh-remote 数据目录/配置文件名的运行时迁移（一次性事件，用户手动搬移）；relay.db 迁移合并为单一 CREATE 且版本号归一为 1（旧库 user_version 2–4 手工执行 PRAGMA user_version = 1，schema 逐列一致）。
 - [x] Linux x64 服务版 zip（原绿色包）与构建检查；win/mac 绿色包随 D22 介质收敛退役。
-- [x] 桌面版打包管线（S8 最小集）：`scripts/pack-desktop.mjs` 产出 win NSIS setup + 便携 zip、mac DMG + .app 便携 zip、linux deb + 便携 zip，每平台 setup/portable 两形态、各含 lite/full 变体；完整版附带固定版本 Node（官方 SHA-256 校验清单 `packaging/desktop-node.json`）。Windows 双变体已实打并通过自检；mac/linux 由 CI 原生 runner 构建，实机验收待 S10。统一发布入口 `scripts/release.mjs`：`release` 出本机全部，各平台按变体拆为 `release:win|mac|linux:lite|full` 六个命令（linux 两变体均含服务版 zip）；CI release 工作流三路原生 runner + 汇总发布。
+- [x] 桌面版打包管线（S8 最小集）：`scripts/pack-desktop.mjs` 产出 win NSIS setup + 便携 zip、mac DMG + .app 便携 zip、linux deb + 便携 zip，每平台 setup/portable 两形态、各含 lite/full 变体；完整版附带固定版本 Node（官方 SHA-256 校验清单 `packaging/desktop-node.json`）。Windows 双变体已实打并通过自检；mac/linux 由 CI 原生 runner 构建，实机验收待 S10。统一发布入口 `scripts/release.mjs`：`release` 出本机全部，各平台按变体拆为 `release:win|mac|linux:lite|full` 六个命令（linux 两变体均含服务版 zip），另有 `release:linux-server:lite|full` 只打服务版 zip（任意平台可执行）；CI release 工作流三路原生 runner + 汇总发布。
 - [x] manifest 与应用图标。
 - [x] 20 个功能组件，按 4 个组合包与 6 个独立包随发行版提供，功能入口见插件索引。
 - [x] concise 与 concise-ptc 两个简洁预设，PTC 复用官方工具执行链。

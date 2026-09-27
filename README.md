@@ -68,7 +68,7 @@ pnpm install
 pnpm release
 ```
 
-发布命令按平台 × 变体拆分：`pnpm release:win:lite` / `pnpm release:win:full`，mac、linux 同理；`release:linux:<变体>` 会同时产出对应变体的服务版 zip。`pnpm release` 一次打本机能产的全部，即本机桌面双变体加 Linux 服务版。统一入口是 `scripts/release.mjs`：构建一次后串起两个打包脚本，`--skip-build` 复用现有 dist。
+发布命令按发布端 × 变体拆分：`pnpm release:win:lite` / `pnpm release:win:full`，mac、linux 同理；`release:linux:<变体>` 会同时产出对应变体的服务版 zip；只要服务版（或本机不是 Linux 也要打服务版 zip）时用 `release:linux-server:<变体>`，它在任意平台都能执行。`pnpm release` 一次打本机能产的全部，即本机桌面双变体加 Linux 服务版。统一入口是 `scripts/release.mjs`：构建一次后串起两个打包脚本，`--skip-build` 复用现有 dist。
 
 完整版首次打包会下载随包 Node，约 30 MB/平台，之后缓存在 `.dev/desktop-toolchain` 不再重复下载；国内可设 `DSH_STATION_NODE_DIST_MIRROR=https://npmmirror.com/mirrors/node` 走镜像。只要轻量版就用 `:lite` 命令，完全跳过下载。
 

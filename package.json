@@ -28,6 +28,8 @@
     "release:win:full": "node scripts/release.mjs --target=win32-x64 --variant=full",
     "release:linux:lite": "node scripts/release.mjs --target=linux-x64 --variant=lite",
     "release:linux:full": "node scripts/release.mjs --target=linux-x64 --variant=full",
+    "release:linux-server:lite": "node scripts/release.mjs --target=server --variant=lite",
+    "release:linux-server:full": "node scripts/release.mjs --target=server --variant=full",
     "release:mac:lite": "node scripts/release.mjs --target=darwin-arm64 --variant=lite",
     "release:mac:full": "node scripts/release.mjs --target=darwin-arm64 --variant=full",
     "lint": "oxlint .",

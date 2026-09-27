@@ -22,13 +22,16 @@
 | Windows 桌面版（`…-win-x64-desktop-<变体>-setup.exe` / `.zip`） | pnpm release:win:lite | pnpm release:win:full |
 | macOS 桌面版（`…-darwin-arm64-desktop-<变体>.dmg` / `.zip`） | pnpm release:mac:lite | pnpm release:mac:full |
 | Linux 桌面版（`…-linux-x64-desktop-<变体>.deb` / `.zip`） | pnpm release:linux:lite | pnpm release:linux:full |
+| Linux 服务版（`…-linux-x64-server-<变体>.zip`） | pnpm release:linux-server:lite | pnpm release:linux-server:full |
 
-Linux 服务版 zip（`…-linux-x64-server-<变体>.zip`）随 `release:linux:<变体>` 一并产出
-（`release:linux:lite` 出 lite 服务版，`:full` 出 full 服务版）。
+`release:linux-server:<变体>` 只打服务版 zip，可从任意平台执行（服务版是纯 JS，
+支持交叉打包，不挑本机）。Linux 服务版 zip 仍随 `release:linux:<变体>` 与 `release`
+一并产出：CI 的 linux 作业靠一条命令出全部 Linux 介质，本机打桌面版时也不必再单独补
+服务版。
 
 `pnpm release`（`scripts/release.mjs`，= `--target=all`）是聚合入口：构建一次后按目标
 串起两个打包脚本，打本机桌面版 + Linux 服务版的 lite/full 全部介质；显式目标在非本机
-平台上提前报错，不白跑构建。按变体拆分的六个 `release:<平台>:<变体>` 命令方便只要
+平台上提前报错，不白跑构建。按变体拆分的 `release:*` 命令方便只要
 lite 时跳过随包 Node 下载（full 首次下载后缓存在 `.dev/desktop-toolchain`，不再重复下载）。
 推 `v*` 标签时 release 工作流在三个原生 runner 各跑一条
 `node scripts/release.mjs --target=<平台>`（一次构建出双变体），汇总校验和并附到 GitHub Release。
@@ -202,14 +205,14 @@ profile 装载与共享范围见 [决策](01-decisions.md)。
 ```powershell
 pnpm check:dependencies
 pnpm build
-pnpm release:linux:full   # 本机不是 Linux x64 时，服务版 zip 可用 pack.mjs --target=linux-x64 显式交叉打包
+pnpm release:linux-server:full   # 只打 Linux 服务版 zip，本机不是 Linux x64 也能交叉打包
 ```
 
-统一入口 `scripts/release.mjs` 支持 `--target=<win32-x64|linux-x64|darwin-arm64|all>`
-（默认 all = 本机桌面版 + Linux 服务版）、`--variant=<lite|full>` 只打指定变体（默认全打，
-对应 release:<平台>:<lite|full> 六个命令）、`--skip-build` 复用 dist，其余参数（如桌面版
-`--skip-installer`）原样透传给两个打包脚本。显式桌面目标与当前平台不符时在构建前报错，
-不白跑构建。不要使用 `pnpm pack` 代替 release，它是 pnpm 自带的包归档命令。
+统一入口 `scripts/release.mjs` 支持 `--target=<win32-x64|linux-x64|darwin-arm64|server|all>`
+（默认 all = 本机桌面版 + Linux 服务版；`server` 只打 Linux 服务版 zip，可从任意平台执行）、
+`--variant=<lite|full>` 只打指定变体（默认全打，对应上表八个 `release:*` 命令）、`--skip-build`
+复用 dist，其余参数（如桌面版 `--skip-installer`）原样透传给两个打包脚本。显式桌面目标与当前
+平台不符时在构建前报错，不白跑构建。不要使用 `pnpm pack` 代替 release，它是 pnpm 自带的包归档命令。
 
 打包流程：
 

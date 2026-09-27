@@ -68,7 +68,7 @@ pnpm install
 pnpm release
 ```
 
-Release commands are split per platform × variant: `pnpm release:win:lite` / `pnpm release:win:full` (mac/linux likewise; `release:linux:<variant>` also packs the matching server zip). `pnpm release` packs everything the current machine can produce: host desktop both variants plus the Linux server zip. The unified entry is `scripts/release.mjs`: it builds once and chains the two packers; `--skip-build` reuses dist.
+Release commands are split per release target × variant: `pnpm release:win:lite` / `pnpm release:win:full` (mac/linux likewise; `release:linux:<variant>` also packs the matching server zip). To pack only the server zip — including from a non-Linux machine — use `release:linux-server:<variant>`; it runs on any platform. `pnpm release` packs everything the current machine can produce: host desktop both variants plus the Linux server zip. The unified entry is `scripts/release.mjs`: it builds once and chains the two packers; `--skip-build` reuses dist.
 
 The full edition downloads its bundled Node (~30 MB per platform) on the first pack and caches it under `.dev/desktop-toolchain` afterwards; in China, set `DSH_STATION_NODE_DIST_MIRROR=https://npmmirror.com/mirrors/node` to use a mirror. Stick to the `:lite` commands to skip the download entirely.
 

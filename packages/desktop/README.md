@@ -27,6 +27,7 @@ pnpm release:win:lite            # 只打 Windows 桌面轻量版（setup + 便�
 pnpm release:win:full            # 只打 Windows 桌面完整版（首次下载随包 Node，之后走缓存）
 pnpm release:mac:lite / :full    # 同理，macOS 桌面介质（DMG + .app 便携 zip）
 pnpm release:linux:lite / :full  # Linux 桌面介质（deb + 便携 zip）+ 对应变体的服务版 zip
+pnpm release:linux-server:lite / :full  # 只打 Linux 服务版 zip（任意平台可执行）
 ```
 
 每个桌面平台分 setup（安装包）与 portable（便携 zip）两种形态（D22），命令按平台 ×
