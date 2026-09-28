@@ -1,4 +1,7 @@
+import { ADMIN_THEME_SCRIPT } from '../src/admin/theme-client.js'
 import { afterEach, describe, expect, it } from 'vitest'
+import { accountPage } from '../src/admin/console/account.js'
+import { PASSWORD_RULE_TEXT } from '../src/admin/shared.js'
 import {
   verifyPassword,
 } from '../src/index.js'
@@ -69,6 +72,48 @@ function storedAdmin(fixture: Fixture) {
 
 afterEach(async () => {
   await closeFixtures(fixtures)
+})
+
+function renderAccountCopy(confirmable?: boolean): string {
+  return accountPage({
+    csrf: 'account-csrf', account: 'ops<&>', machine: 'pc1', username: null,
+    appearance: { theme: 'light' },
+    ...confirmable === undefined ? {} : { enrollment: { secret: 'ABCDEFGH', qrSvg: '<svg></svg>', confirmable } },
+  })
+}
+
+describe('concise account content', () => {
+  it('keeps security consequences above actions and password rules next to the field', () => {
+    const html = renderAccountCopy()
+    expect(html).toContain('登录账号：<strong>ops&lt;&amp;&gt;</strong>')
+    expect(html).toContain('<label for="newPassword">新密码</label>')
+    expect(html).toContain('aria-describedby="passwordRule"')
+    expect(html).toContain(`<p class="hint" id="passwordRule">${PASSWORD_RULE_TEXT}</p>`)
+    expect(html).toContain('<label for="confirmPassword">确认新密码</label>')
+    expect(html).toContain('所有设备需用新密码重新登录')
+    expect(html).toContain('旧动态码将失效，所有设备需重新登录')
+    expect(html.indexOf('所有设备需用新密码重新登录')).toBeLessThan(html.indexOf(`action="${ADMIN_PASSWORD_PATH}"`))
+    expect(html.indexOf('旧动态码将失效')).toBeLessThan(html.indexOf(`action="${ADMIN_TOTP_RESET_PATH}"`))
+    expect(html).not.toContain('class="otp"')
+    expect([...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gu)].map(match => match[1])).toEqual([ADMIN_THEME_SCRIPT])
+    expect(html).not.toContain('signed in as')
+  })
+
+  it.each([true, false])('retains one-time binding instructions for confirmable=%s', (confirmable) => {
+    const html = renderAccountCopy(confirmable)
+    expect(html).toContain('密钥仅显示一次')
+    expect(html).toContain('使用验证器 App 扫码添加账号')
+    expect(html.match(/<p class="otp">/g)).toHaveLength(1)
+    expect(html).toContain('ABCD EFGH')
+    if (confirmable) {
+      expect(html).toContain('action="/_admin/account/totp/confirm"')
+      expect(html).toContain('name="csrf" value="account-csrf"')
+      expect(html).toContain('id="totp" name="totp"')
+    } else {
+      expect(html).not.toContain('action="/_admin/account/totp/confirm"')
+      expect(html).toContain('新动态码</strong>重新登录')
+    }
+  })
 })
 
 describe('console account management', () => {

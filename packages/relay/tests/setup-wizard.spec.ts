@@ -167,7 +167,7 @@ describe('first-run setup wizard', () => {
       headers: { host: fixture.lanHost, accept: 'text/html' },
     })
     expect(lan.status).toBe(503)
-    expect(lan.body).toContain('还没有创建管理员账号')
+    expect(lan.body).toContain('请先创建管理员账号')
   })
 
   it('refuses to create the administrator from a non-loopback Host', async () => {
@@ -181,7 +181,7 @@ describe('first-run setup wizard', () => {
     })
     expect(page.status).toBe(503)
     expect(page.headers['content-type']).toContain('text/html')
-    expect(page.body).toContain('还没有创建管理员账号')
+    expect(page.body).toContain('请先创建管理员账号')
     expect(page.body).toContain(`http://127.0.0.1:${String(fixture.port)}${SETUP_PATH_PREFIX}`)
     expect(page.body).not.toContain(`action="${SETUP_CREATE_PATH}"`)
 
@@ -202,7 +202,7 @@ describe('first-run setup wizard', () => {
       headers: { host: fixture.lanHost, accept: 'text/html' },
     })
     expect(landing.status).toBe(503)
-    expect(landing.body).toContain('还没有创建管理员账号')
+    expect(landing.body).toContain('请先创建管理员账号')
   })
 
   it('rejects a CSRF-less or cross-origin submission and creates no user', async () => {

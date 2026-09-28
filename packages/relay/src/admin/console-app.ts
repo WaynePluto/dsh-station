@@ -8,6 +8,9 @@ import type { BrowserCookiePolicy } from '../auth/cookies.js'
 import type { RelayConfig } from '../config.js'
 import { membershipFilePath } from '../membership/index.js'
 import { emptyResponse } from './shared.js'
+import type { NativeTheme } from './native-theme.js'
+import type { ThemeEvents } from './theme-events.js'
+import { ADMIN_THEME_EVENTS_PATH } from './theme-client.js'
 import type { RelayStore } from '../store/store.js'
 import type { MachineRegistry } from '../tunnel/registry.js'
 import { registerAccountRoutes } from './console/account-routes.js'
@@ -57,6 +60,8 @@ export function createAdminConsoleRequestListener(options: {
   registry: MachineRegistry
   config: RelayConfig
   logger: Logger
+  nativeTheme: NativeTheme
+  themeEvents: ThemeEvents
   /** 机器当前的浏览器端口（存在开放 listener 时提供）。 */
   memberPort?: (machineId: string) => number | undefined
   /** 成功吊销后调用，使机器端口停止监听。 */
@@ -89,6 +94,7 @@ export function createAdminConsoleRequestListener(options: {
     membershipPath: membershipFilePath(config.home),
     machine,
     sessionOf,
+    nativeTheme: options.nativeTheme,
   })
 
   registerMachineRoutes(app, {
@@ -111,6 +117,10 @@ export function createAdminConsoleRequestListener(options: {
   }) as (request: IncomingMessage, response: ServerResponse) => Promise<void>
 
   return async (request, response, session) => {
+    if (request.url?.split('?')[0] === ADMIN_THEME_EVENTS_PATH) {
+      options.themeEvents.handle(request, response, session)
+      return
+    }
     sessions.set(request, session)
     await listener(request, response)
   }

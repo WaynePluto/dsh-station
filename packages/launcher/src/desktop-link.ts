@@ -20,11 +20,14 @@ export type DesktopPhase =
   | 'plugins'
   | 'dsh'
   | 'ready'
-  /** 本机模式按需启用远程：补起 relay + connector（D25）。 */
+  /** 本机模式按需启停远程：只控制 relay + connector（D25）。 */
   | 'remote'
   | 'restarting'
   | 'stopping'
   | 'failed'
+
+/** 按需远程独立于本机 dsh 的生命周期；失败后需退出重开。 */
+export type RemoteState = 'idle' | 'starting' | 'ready' | 'stopping' | 'failed'
 
 export interface DesktopUrls {
   /** 本机入口（浏览器与内置窗口都用它）：远程未启用时是 dsh 直连地址，启用后是 relay。 */
@@ -53,8 +56,12 @@ export type DesktopMessage =
      * 与传给 connector 的 DSH_STATION_DSH_TOKEN 环境变量同级，不落日志。
      */
     readonly dshToken?: string | undefined
-    /** 远程服务（relay + connector）是否已按需启用。 */
+    /** 远程服务已按需启用且本机转发链路就绪；remote 阶段仍为 false，不表示公网可达。 */
     readonly remoteEnabled?: boolean | undefined
+    /** 每次状态上报携带；远程失败不等于本机后台失败。 */
+    readonly remoteState?: RemoteState | undefined
+    /** 本次远程操作的失败原因；直到进程退出一直保留，不含凭据。 */
+    readonly remoteError?: string | undefined
   }
   | {
     readonly type: 'exit'
@@ -67,6 +74,10 @@ export type DesktopCommand =
   | { readonly type: 'stop' }
   /** 托盘「启用远程服务」：补起 relay + connector（D25）；重复发送是幂等空操作。 */
   | { readonly type: 'start-remote' }
+  /** 仅停止已就绪的远程服务，保留本机 dsh。 */
+  | { readonly type: 'stop-remote' }
+  /** 仅重启已就绪的远程服务，不重启 dsh。 */
+  | { readonly type: 'restart-remote' }
 
 /** stdin 命令回调；解析失败的行静默忽略。 */
 export type DesktopCommandHandler = (command: DesktopCommand) => void
@@ -143,6 +154,8 @@ export function createDesktopLink(argv: readonly string[], io: DesktopLinkIo = p
           if (!isObject(parsed)) return
           if (parsed.type === 'stop') handler({ type: 'stop' })
           else if (parsed.type === 'start-remote') handler({ type: 'start-remote' })
+          else if (parsed.type === 'stop-remote') handler({ type: 'stop-remote' })
+          else if (parsed.type === 'restart-remote') handler({ type: 'restart-remote' })
         } catch {
           // 控制通道只接受完整 JSON 行；坏行忽略，不中断进程。
         }

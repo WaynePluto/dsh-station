@@ -33,7 +33,7 @@ import type {
   AdminConsoleSession,
 } from './request-context.js'
 import type { PageAppearance } from '../shared.js'
-import { htmlHeaders, redirectResponse, textField } from '../shared.js'
+import { ADMIN_CSP, htmlHeaders, redirectResponse, textField } from '../shared.js'
 
 /** 远程入口页面及 membership 文件操作相关的路由。 */
 export function registerHubRoutes(
@@ -104,33 +104,33 @@ export function registerHubRoutes(
     // 无法读取的远程入口仍值得清除——这是能修复它的唯一操作——因此页面要说明将清除什么。
     const consequences = view.kind === 'joined'
       ? [
-          `${machine} 不再出现在 ${view.hub.relayUrl} 的机器列表里，也不能再从那个地址打开。`,
-          `这个入口会被记住：取消后可以在本页一键「重新连接」，入口那边的「机器」页也能「请求上线」把 ${machine} 唤醒。`,
-          `${machine} 的 dsh 会自动重启一次以撤销对入口机器地址的信任，期间短暂中断。`,
-          `挂在 ${machine} 上的那些机器不受影响，一台都不会掉线。`,
-          `本机和局域网地址不受影响，仍然可以打开 ${machine} 的 dsh。`,
+          `${machine} 将无法再通过 ${view.hub.relayUrl} 访问。`,
+          `取消后可在本页「重新连接」，或从入口机器的「机器」页「请求上线」。`,
+          `${machine} 的 dsh 会自动重启，访问会短暂中断。`,
+          `通过 ${machine} 开放的其他机器不受影响。`,
+          `重启后可用本机或局域网地址访问 ${machine}。`,
         ]
       : [
-          `读不出的 ${MEMBERSHIP_FILE_NAME} 会被清空，${machine} 回到没有远程入口的状态。`,
-          `如果之前的文件里记过入口地址，dsh 会自动重启一次撤销对它的信任，期间短暂中断。`,
-          `挂在 ${machine} 上的那些机器不受影响，一台都不会掉线。`,
-          `本机和局域网地址不受影响，仍然可以打开 ${machine} 的 dsh。`,
+          `损坏的 ${MEMBERSHIP_FILE_NAME} 将被清空，${machine} 的远程入口设置会被移除。`,
+          `若原配置包含入口地址，dsh 会自动重启，访问会短暂中断。`,
+          `通过 ${machine} 开放的其他机器不受影响。`,
+          `重启后可用本机或局域网地址访问 ${machine}。`,
         ]
     return new Response(confirmPage({
       title: '取消远程入口',
       machine,
       heading: `取消 ${machine} 的远程入口？`,
-      intro: `取消只影响 ${machine} 自己能从哪里被打开，不会停掉任何挂在 ${machine} 上的机器。`,
+      intro: `确认后将取消 ${machine} 的远程入口设置。`,
       consequences,
       action: ADMIN_MEMBERSHIP_LEAVE_PATH,
       csrf,
       submitLabel: '确认取消',
       cancelPath: ADMIN_HUB_PATH,
-      cancelLabel: '取消，返回远程入口',
+      cancelLabel: '返回远程入口',
       appearance: appearanceOf(context, ADMIN_MEMBERSHIP_LEAVE_PATH),
     }), {
       status: 200,
-      headers: htmlHeaders([...session.setCookieHeaders, ...setCookieHeaders]),
+      headers: htmlHeaders([...session.setCookieHeaders, ...setCookieHeaders], ADMIN_CSP),
     })
   })
 
@@ -155,17 +155,17 @@ export function registerHubRoutes(
     })
 
     if (!isHubRelayUrl(relayUrl)) {
-      return reject(400, '这条命令里没有可用的 --relay 地址（应为 ws:// 或 wss://）。回到入口机器的「机器」页，把它给出的命令整条重新复制。')
+      return reject(400, '连接命令缺少有效的 --relay 地址（ws:// 或 wss://）。请到入口机器的「机器」页重新复制完整命令。')
     }
     const slug = machineSlugSchema.safeParse(requestedSlug)
     if (!slug.success) {
-      return reject(400, `这条命令里的 --slug 不是合法的机器名（小写字母、数字和连字符组成的 DNS 标签，例如 pc2），${machine} 的远程入口没有设置。`)
+      return reject(400, `--slug 必须是合法的机器名（DNS 标签：小写字母、数字和连字符）。${machine} 的本次设置未保存。`)
     }
     if (enrollToken !== '' && enrollToken.length < MIN_ENROLL_TOKEN_LENGTH) {
-      return reject(400, '命令里的注册令牌看起来不完整，请回到入口机器的控制台重新复制整条命令。')
+      return reject(400, '注册令牌不完整。请到入口机器的「机器」页重新复制完整命令。')
     }
     if (browserAuthority !== '' && !isBrowserAuthority(browserAuthority)) {
-      return reject(400, '命令里的 --hub-authority 只能是主机名或 主机名:端口，不能带 http:// 或路径。')
+      return reject(400, '--hub-authority 只能是主机名或主机名:端口，不能包含协议或路径。')
     }
 
     const now = Date.now()
@@ -183,7 +183,7 @@ export function registerHubRoutes(
       writeMembershipFile(membershipPath, membership)
     } catch (error) {
       logger.error({ err: error, path: membershipPath }, 'could not write the membership file')
-      return reject(500, `写入 ${MEMBERSHIP_FILE_NAME} 失败，${machine} 的远程入口没有设置成。检查 ${membershipPath} 的权限后重试。`)
+      return reject(500, `${machine} 的设置未保存：无法写入 ${MEMBERSHIP_FILE_NAME}。请检查 ${membershipPath} 的权限后重试。`)
     }
     audit.record({
       occurredAt: now,
@@ -246,7 +246,7 @@ export function registerHubRoutes(
         session,
         appearance: appearanceOf(context, ADMIN_HUB_PATH),
         status: 500,
-        error: `写入 ${MEMBERSHIP_FILE_NAME} 失败，${machine} 的远程入口没有取消。检查 ${membershipPath} 的权限后重试。`,
+        error: `未能取消 ${machine} 的远程入口：无法写入 ${MEMBERSHIP_FILE_NAME}。请检查 ${membershipPath} 的权限后重试。`,
       })
     }
     audit.record({
@@ -296,7 +296,7 @@ export function registerHubRoutes(
         session,
         appearance: appearanceOf(context, ADMIN_HUB_PATH),
         status: 500,
-        error: `写入 ${MEMBERSHIP_FILE_NAME} 失败，${machine} 没有重新连上上次的入口。检查 ${membershipPath} 的权限后重试。`,
+        error: `未能提交 ${machine} 的重新连接：无法写入 ${MEMBERSHIP_FILE_NAME}。请检查 ${membershipPath} 的权限后重试。`,
       })
     }
     audit.record({

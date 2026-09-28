@@ -12,8 +12,13 @@ type desktopTrayCallbacks struct {
 	onBrowser func()
 	onAdmin   func()
 	// onRemote 对应「启用远程服务」（D25）：按需补起 relay + connector。
-	onRemote func()
-	onQuit   func()
+	onRemote           func()
+	onStopRemote       func()
+	onRestartRemote    func()
+	onQuit             func()
+	remoteState        func() remoteMenuState
+	stopRemoteState    func() remoteMenuState
+	restartRemoteState func() remoteMenuState
 }
 
 type desktopTrayHandle struct{}
@@ -26,7 +31,7 @@ func startWindowsTray(desktopTrayCallbacks) (*desktopTrayHandle, error) {
 	return nil, errors.New("此平台还没有实现常驻托盘（计划 S10.2）")
 }
 
-func acquireSingleInstance() (bool, func()) {
+func acquireSingleInstance(bool, string) (bool, func()) {
 	return true, func() {}
 }
 

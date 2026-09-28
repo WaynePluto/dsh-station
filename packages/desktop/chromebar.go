@@ -15,15 +15,14 @@ import (
 var chromebarLogoSVG string
 
 // Chrome 是自绘标题栏暴露给页面侧的最小窗口控制绑定。
-// 这是「业务页零 Go bindings」边界的书面例外（决策见根 .agent-plan.md）：
-// 只有下面的无参方法，BindingsAllowedOrigins 仅追加本机 relay origin；
-// 页面被攻破的最坏影响是隐藏/退出窗口或用既定入口打开系统浏览器，
-// 没有任意 URL、执行或文件能力。
+// 无参绑定只接受配置握手中的 dsh/relay 精确 origin；管理动作可按需启用远程。
+// 不接受任意 URL、命令或文件参数，导航目标全部由壳的配置与加载页生成。
 type Chrome struct {
 	currentWindow func() context.Context
 	// resolve 在调用时解析工作台/远程管理地址：独立模式下 relay 端口由后台
 	// 上报后才确定；attach 模式返回启动参数里的静态地址。
 	resolve func() (home string, admin string)
+	admin   func(external bool)
 }
 
 func (c *Chrome) Minimize() {
@@ -61,9 +60,28 @@ func (c *Chrome) OpenExternalHome() {
 }
 
 func (c *Chrome) OpenExternalAdmin() {
+	if c.admin != nil {
+		c.admin(true)
+	}
+}
+
+func (c *Chrome) OpenAdmin() {
+	if c.admin != nil {
+		c.admin(false)
+	}
+}
+
+func (c *Chrome) OpenHome() {
 	if ctx := c.currentWindow(); ctx != nil {
-		_, admin := c.resolve()
-		runtime.BrowserOpenURL(ctx, admin)
+		home, _ := c.resolve()
+		navigateWindow(ctx, home)
+	}
+}
+
+func navigateWindow(ctx context.Context, address string) {
+	literal, err := json.Marshal(address)
+	if err == nil {
+		runtime.WindowExecJS(ctx, "location.assign("+string(literal)+")")
 	}
 }
 
@@ -74,13 +92,13 @@ func (c *Chrome) OpenExternalAdmin() {
 // 主题取自页面 body 背景色。
 const chromebarScript = `(function(){
   if (document.getElementById('dsh-station-chromebar')) return;
-  // 只在本机 relay 页面注入；独立模式的状态页（wails 资产来源）自带轻量布局。
-  if (location.origin !== '__RELAY_ORIGIN__') return;
+  // 只在配置握手中的 dsh/relay 页面注入；临时加载页与资产页不获得绑定。
+  if (location.origin !== '__RELAY_ORIGIN__' && location.origin !== '__ADMIN_ORIGIN__') return;
   var RELAY='__RELAY_URL__', ADMIN='__ADMIN_URL__';
   var call=function(name){return function(){
     // Wails 运行时只注入资产服务器主页面，relay 页面上没有 window.go；
     // 但 WebView2 的 postMessage 通道与消息格式（'C'+{name,args,callbackID}）
-    // 对所有页面开放，且 Go 侧 BindingsAllowedOrigins 已放行本机 relay 来源。
+    // Go 侧 BindingsAllowedOrigins 只放行握手中确认的 dsh/relay 来源。
     var payload={name:'main.Chrome.'+name,args:[],callbackID:'chrome-'+name+'-'+Math.random()};
     var w=window.chrome&&window.chrome.webview;
     if(w&&w.postMessage) w.postMessage('C'+JSON.stringify(payload));
@@ -102,8 +120,16 @@ const chromebarScript = `(function(){
     bar.style.setProperty('--dshrc-hover',dark?'#2e2e2e':'#f0f0f0');
   };
   applyTheme();
+  document.addEventListener('visibilitychange',applyTheme);
   if(window.MutationObserver){
-    new MutationObserver(applyTheme).observe(document.documentElement,{attributes:true,attributeFilter:['class','style']});
+    // 分别观察管理页主题与原生dsh主题；不观察子树，避免标题栏自身样式触发循环。
+    var themeObserver=new MutationObserver(applyTheme);
+    themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme','data-ds-theme-source']});
+    themeObserver.observe(document.body,{attributes:true,attributeFilter:['class','style','data-ds-dark-theme']});
+  }
+  if(window.matchMedia){
+    var themeMedia=window.matchMedia('(prefers-color-scheme: dark)');
+    if(themeMedia.addEventListener) themeMedia.addEventListener('change',applyTheme);
   }
   var logo=document.createElement('span');
   logo.style.cssText='--wails-draggable:no-drag;display:flex;align-items:center;margin:0 6px 0 4px';
@@ -160,8 +186,8 @@ const chromebarScript = `(function(){
   };
   document.addEventListener('click',closeAll);
   bar.appendChild(menu('转到',[
-    ['工作台',function(){location.assign(RELAY)}],
-    ['远程管理',function(){location.assign(ADMIN)}],
+    ['工作台',call('OpenHome')],
+    ['远程管理',call('OpenAdmin')],
     ['-'],
     ['在浏览器中打开工作台',call('OpenExternalHome')],
     ['在浏览器中打开远程管理',call('OpenExternalAdmin')]
@@ -231,9 +257,9 @@ const chromebarScript = `(function(){
     else if(rightB) set('e-resize');
   });
   if(!document.body) return;
-  // dsh 外壳是 html/body/#root 的 height:100% 链；body 默认 content-box 会把
-  // padding 加在 100% 之外造成 36px 底部裁切，border-box 让内容自然缩进自绘条以下。
-  document.body.style.paddingTop='36px';
+  // 标题栏占位须叠加 relay 页面原有留白，不能覆盖；变量随窄屏样式更新。
+  // dsh 未定义留白变量，仍只缩进36px；border-box 避免 height:100% 链底部裁切。
+  document.body.style.paddingTop='calc(36px + var(--dsh-station-page-top-gap, 0px))';
   document.body.style.boxSizing='border-box';
   document.documentElement.appendChild(bar);
 })()`
@@ -241,7 +267,7 @@ const chromebarScript = `(function(){
 // buildChromeBarScript 把配置地址与 logo 注入脚本模板；地址来自启动参数校验结果，
 // 只能是规范的 http://127.0.0.1:<端口>/ 形式。logo 是多行 SVG，必须经 JSON 编码
 // 变成合法的 JS 字符串字面量，直接塞进单引号字符串会因换行破坏整个脚本。
-// titleSuffix 是 attach 开发模式的「 (dev)」标记，与窗口标题、任务栏区分开发壳。
+// titleSuffix 是开发模式的「 (dev)」标记，与窗口标题、任务栏区分开发壳。
 func buildChromeBarScript(relayURL, adminURL, titleSuffix string) string {
 	logoLiteral, err := json.Marshal(chromebarLogoSVG)
 	if err != nil {
@@ -252,6 +278,7 @@ func buildChromeBarScript(relayURL, adminURL, titleSuffix string) string {
 		"__RELAY_URL__", relayURL,
 		"__RELAY_ORIGIN__", origin,
 		"__ADMIN_URL__", adminURL,
+		"__ADMIN_ORIGIN__", relayOrigin(adminURL),
 		"__LOGO_SVG__", string(logoLiteral),
 		"__TITLE_SUFFIX__", fmt.Sprintf("%q", titleSuffix),
 	).Replace(chromebarScript)

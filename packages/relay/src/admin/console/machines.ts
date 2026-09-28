@@ -14,7 +14,6 @@ import {
   ADMIN_WAKEUP_PATH,
   consolePage,
   formatTime,
-  whereDshRuns,
 } from './shell.js'
 
 /** 刚签发的令牌，只渲染一次，之后无法找回。 */
@@ -100,17 +99,18 @@ function machineItem(options: {
     : probedAt !== undefined && now - probedAt <= PROBE_FRESH_MS
       ? 'idle'
       : 'offline'
+  const localBadge = self ? '<span class="badge local">本机</span>' : ''
   const badge = revoked
-    ? '<span class="badge gone">已停止并移除</span>'
+    ? '<span class="badge gone">已移除</span>'
     : presence === 'online'
-      ? `<span class="badge on">在线</span>${self ? '<span class="badge">本机</span>' : ''}`
+      ? `<span class="badge on">在线</span>${localBadge}`
       : presence === 'idle'
-        ? `<span class="badge idle">已断开 · 可唤醒</span>${self ? '<span class="badge">本机</span>' : ''}`
-        : `<span class="badge off">离线</span>${self ? '<span class="badge">本机</span>' : ''}`
+        ? `<span class="badge idle">已断开 · 可唤醒</span>${localBadge}`
+        : `<span class="badge off">离线</span>${localBadge}`
   const entry = revoked ? undefined : machineEntryUrl({ device, config, hostname })
   const link = entry === undefined || presence !== 'online'
     ? ''
-    : `<a class="open" href="${escapeHtml(entry)}">打开 ${escapeHtml(device.slug)} 的 dsh →</a>`
+    : `<a class="open" href="${escapeHtml(entry)}">打开 ${escapeHtml(device.slug)}</a>`
   // 「请求上线」对断开的机器立即生效（约一个探测周期内连回），对真正
   // 离线的机器保留等待它回来；两种都值得提供，徽标已经说明区别。
   const wakeup = revoked || self || presence === 'online'
@@ -125,18 +125,22 @@ function machineItem(options: {
   const revokeLabel = presence === 'online'
     ? `停止 ${escapeHtml(device.slug)} 并移除…`
     : `移除 ${escapeHtml(device.slug)}…`
-  const action = self
-    ? '<span class="hint">本机运行着这个控制台，从这里打开即可。</span>'
-    : revoked
-      ? '<span class="off">已停止并移除，重新挂上来需要新的注册令牌。</span>'
-      : `<a class="danger-link" href="${ADMIN_REVOKE_PATH}?machineId=${encodeURIComponent(device.machineId)}">${revokeLabel}</a>`
+  const action = self || revoked
+    ? ''
+    : `<a class="danger-link" href="${ADMIN_REVOKE_PATH}?machineId=${encodeURIComponent(device.machineId)}">${revokeLabel}</a>`
+  const wakeupHint = wakeup === ''
+    ? ''
+    : `<p class="hint">${presence === 'idle'
+      ? '重连通常需约一分钟，请求保留 24 小时。'
+      : '请求保留 24 小时；无法唤醒已关机的机器。'}</p>`
   const address = revoked || entry === undefined || entry === '/'
     ? ''
     : `<br>访问地址 ${escapeHtml(entry)}`
   return `<li class="machine">
 <h2>${escapeHtml(device.slug)}${badge}</h2>
-<p class="meta">machineId ${escapeHtml(device.machineId)}<br>注册于 ${escapeHtml(formatTime(device.createdAt))}<br>更新于 ${escapeHtml(formatTime(device.updatedAt))}${address}</p>
-<div class="actions">${link}${wakeup}${action}</div>
+${link || wakeup || action ? `<div class="actions">${link}${wakeup}${action}</div>` : ''}
+${wakeupHint}
+<details class="details"><summary>详细信息</summary><p class="meta">机器 ID ${escapeHtml(device.machineId)}<br>注册于 ${escapeHtml(formatTime(device.createdAt))}<br>更新于 ${escapeHtml(formatTime(device.updatedAt))}${address}</p></details>
 </li>`
 }
 
@@ -167,7 +171,6 @@ function tokenPanel(options: {
   issued: IssuedTokenView
   host: string | undefined
   config: RelayConfig
-  machine: string
 }): string {
   const { issued, host, config } = options
   const command = connectorCommand({
@@ -184,28 +187,27 @@ function tokenPanel(options: {
     }),
   })
   return `<section class="token">
-<h2>${escapeHtml(issued.slug)} 的注册令牌</h2>
+<h2>连接 ${escapeHtml(issued.slug)}</h2>
 <p class="warn">${escapeHtml(ENROLL_TOKEN_SHOWN_ONCE_NOTICE)}</p>
-<p class="secret">${escapeHtml(issued.token)}</p>
-<p class="meta">${escapeHtml(ENROLL_TOKEN_SINGLE_USE_NOTICE)}</p>
-<p class="warn">把整条命令复制到 ${escapeHtml(issued.slug)} 上，粘进它控制台的「远程入口」页（令牌、机器名和要信任的地址都已经写在命令里）：</p>
+<p class="warn">在 ${escapeHtml(issued.slug)} 的「远程入口」页粘贴完整连接命令：</p>
 <p class="cmd">${escapeHtml(command)}</p>
-<p class="meta">对方提交后回到本页，${escapeHtml(issued.slug)} 会带着自己的访问地址出现在上面的列表里。</p>
+<p class="meta">${escapeHtml(ENROLL_TOKEN_SINGLE_USE_NOTICE)}</p>
+<details class="details"><summary>原始令牌</summary><p class="secret">${escapeHtml(issued.token)}</p></details>
 </section>`
 }
 
-function issueForm(options: { csrf: string; machine: string; error: string | undefined }): string {
-  const { csrf, machine } = options
+function issueForm(options: { csrf: string; error: string | undefined }): string {
+  const { csrf } = options
   const alert = options.error === undefined
     ? ''
     : `<p class="error" role="alert">${escapeHtml(options.error)}</p>`
-  return `<h2 class="section">让另一台机器通过 ${escapeHtml(machine)} 开放</h2>
-<p class="hint">签发一个一次性注册令牌（${String(ENROLL_TOKEN_TTL_MINUTES)} 分钟内有效，像短信验证码一样），把它给对方；对方在自己的控制台里粘一下，就挂到 ${escapeHtml(machine)} 上了。</p>${alert}
+  return `<h2 class="section">添加机器</h2>
+<p class="hint">生成连接命令，在对方的「远程入口」页粘贴；令牌 ${String(ENROLL_TOKEN_TTL_MINUTES)} 分钟内有效。</p>${alert}
 <form method="post" action="${ADMIN_TOKEN_CREATE_PATH}">
 <input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<div class="field"><label for="slug">对方的机器名（小写字母、数字、连字符）</label><input id="slug" name="slug" required maxlength="63" pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+<div class="field"><label for="slug">机器名（如 pc2）</label><input id="slug" name="slug" required maxlength="63" pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
 <div class="field"><label for="name">显示名称（可选）</label><input id="name" name="name" maxlength="64"></div>
-<button type="submit">签发注册令牌</button></form>`
+<button type="submit">生成令牌</button></form>`
 }
 
 /**
@@ -235,7 +237,7 @@ export function machinesPage(options: {
   const active = devices.filter(device => device.revokedAt === null)
   const onlineCount = active.filter(device => online.has(device.machineId)).length
   const list = devices.length === 0
-    ? `<p class="empty">还没有别的机器挂在 ${escapeHtml(machine)} 上。在下面签发一个注册令牌，把它给想开放的那台机器。</p>`
+    ? '<p class="empty">暂无机器</p>'
     : `<ul class="machines">${devices
       .map(device => machineItem({
         device,
@@ -249,19 +251,18 @@ export function machinesPage(options: {
       .join('')}</ul>`
   const panel = options.issued === undefined
     ? ''
-    : tokenPanel({ issued: options.issued, host, config, machine })
+    : tokenPanel({ issued: options.issued, host, config })
   return consolePage({
     current: ADMIN_PATH_PREFIX,
     machine,
-    title: '能打开的机器',
-    heading: `能从 ${escapeHtml(machine)} 打开的机器`,
-    intro: `${String(active.length)} 台在册，${String(onlineCount)} 台在线。${whereDshRuns(machine)}`,
+    title: '机器',
+    heading: '机器',
+    intro: `${String(onlineCount)} / ${String(active.length)} 台在线`,
     username: options.username,
     appearance: options.appearance,
     body: `${panel}
-<h2 class="section">通过 ${escapeHtml(machine)} 开放的机器</h2>
-<p class="hint">这些机器把自己挂在 ${escapeHtml(machine)} 上，所以能从这里打开。「已断开 · 可唤醒」表示那台机器的 dsh-station 还在运行、只是断开了远程入口——点「请求上线」约一分钟内连回；「请求」对已关机的机器会保留 24 小时等它回来。「离线」则可能是关机，也可能挂去了别的入口——这两种从这里无法区分。在线机器的「停止并移除」会让对方 dsh-station 整个退出并作废令牌；离线机器只能「移除」它的设备身份，停不到它上面运行的服务。</p>
+<h2 class="section">工作站列表</h2>
 ${list}
-${issueForm({ csrf, machine, error: options.error })}`,
+${issueForm({ csrf, error: options.error })}`,
   })
 }

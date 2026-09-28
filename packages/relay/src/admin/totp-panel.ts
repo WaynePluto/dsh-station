@@ -58,12 +58,12 @@ export function enrollmentPanel(options: {
     ? ''
     : `<form method="post" action="${escapeHtml(options.confirm.action)}">
 <input type="hidden" name="csrf" value="${escapeHtml(options.confirm.csrf)}">
-<div class="field"><label for="totp">验证器上当前显示的 6 位动态码</label><input class="code" id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></div>
+<div class="field"><label for="totp">6 位动态码</label><input class="code" id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></div>
 <button type="submit">${escapeHtml(options.confirm.label)}</button></form>`
   return `<div class="enroll">
-<p>用手机上的验证器 App（Google Authenticator、1Password、Microsoft Authenticator 等）扫描下面的二维码。</p>
+<p>使用验证器 App 扫码添加账号。</p>
 <div class="qr" role="img" aria-label="验证器绑定二维码">${options.qrSvg}</div>
-<p>扫不了码就手动输入这串密钥（大小写不敏感，空格只是为了好读）：</p>
+<p>无法扫码时，可手动输入密钥：</p>
 <p class="otp">${escapeHtml(groupedSecret(options.secret))}</p>
 ${confirm}
 </div>`

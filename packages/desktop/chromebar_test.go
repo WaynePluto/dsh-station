@@ -60,6 +60,20 @@ func TestBuildChromeBarScript(t *testing.T) {
 		t.Fatal("脚本缺少自绘标题栏元素 ID")
 	}
 
+	if !strings.Contains(script, `document.body.style.paddingTop='calc(36px + var(--dsh-station-page-top-gap, 0px))'`) ||
+		!strings.Contains(script, `document.body.style.boxSizing='border-box'`) {
+		t.Fatal("标题栏占位必须叠加页面留白，未定义变量的dsh仍保持36px与border-box")
+	}
+	if strings.Contains(script, `document.body.style.paddingTop='36px'`) {
+		t.Fatal("不能覆盖管理页的顶部留白")
+	}
+
+	for _, marker := range []string{"'data-theme'", "'data-ds-theme-source'", "'data-ds-dark-theme'", "themeMedia.addEventListener('change',applyTheme)", "document.addEventListener('visibilitychange',applyTheme)"} {
+		if !strings.Contains(script, marker) {
+			t.Fatalf("标题栏缺少主题更新观察: %s", marker)
+		}
+	}
+
 	devScript := buildChromeBarScript("http://127.0.0.1:31809/", "http://127.0.0.1:31809/_admin", " (dev)")
 	if !strings.Contains(devScript, `'DSH 工作站'+" (dev)"`) {
 		t.Fatal("attach 开发模式标题应拼接 (dev) 后缀")

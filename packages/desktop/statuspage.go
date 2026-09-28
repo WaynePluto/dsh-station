@@ -14,15 +14,10 @@ import (
 // 响应头超时（约 300s），并覆盖首次运行插件同步的耗时。
 const bootstrapHoldSeconds = 150
 
-// statusHandler 是独立模式下 AssetServer 的唯一处理器。
-// webview 的初始导航是唯一能进入 dsh/relay 的入口：任何由页面发起的后续
-// 跳转（meta-refresh、JS location）都会带 Sec-Fetch-Site: cross-site，
-// 被入口的原始安全检查正确拒绝。因此这里「持有」初始请求，直到能给出
-// 一个可用的入口再 302：本机模式（D25，远程未启用）在 dsh 就绪且 token
-// 已上报时直连 dsh 的 loopback 并代发一次 /?token= 交换（与 relay 的
-// 首页 token 重定向语义一致）；远程已启用时等 relay 端口开始监听再进
-// relay（dsh/connector 就绪前的等待由 relay 自己的重试页承担）。后台
-// 失败或超时才回答状态页，恢复方式是退出并重新打开。
+// statusHandler 是资产入口的故障兜底；正常受管启动走 startupAssetHandler。
+// 资产 origin 的 HTML 不能自行跳转 dsh，否则 cross-site fence 会拒绝。
+// 此处理器保留持有请求后直接 302 的能力；主程序只在加载服务创建失败、
+// 后台已停止时使用它，此时立即输出故障页。正常等待页在 loopback origin 渲染。
 func statusHandler(manager *backendManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -119,7 +114,7 @@ func phaseAdvice(status backendStatus) string {
 }
 
 // renderStatusPage 输出轻量的启动/故障页（只描述阶段与地址，不带凭据）。
-// 页面绝不自刷新或用 JS 跳转：那类跳转进不了 relay（见 statusHandler 注释）。
+// 资产故障页不自刷新或用 JS 跳转，避免从资产 origin 发起跨站导航。
 // adviceOverride 用于没有后台管理器的 attach 模式给出开发栈专属指引。
 func renderStatusPage(status backendStatus, adviceOverride string) []byte {
 	var builder strings.Builder

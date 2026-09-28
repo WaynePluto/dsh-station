@@ -36,6 +36,7 @@ var (
 	desktopTrayGetSystemMetrics      = desktopTrayUser32.NewProc("GetSystemMetrics")
 	desktopTrayCreatePopupMenu       = desktopTrayUser32.NewProc("CreatePopupMenu")
 	desktopTrayAppendMenu            = desktopTrayUser32.NewProc("AppendMenuW")
+	desktopTrayModifyMenu            = desktopTrayUser32.NewProc("ModifyMenuW")
 	desktopTrayDestroyMenu           = desktopTrayUser32.NewProc("DestroyMenu")
 	desktopTraySetMenuDefaultItem    = desktopTrayUser32.NewProc("SetMenuDefaultItem")
 	desktopTraySetForegroundWindow   = desktopTrayUser32.NewProc("SetForegroundWindow")
@@ -73,6 +74,8 @@ const (
 	desktopTrayNIFTip     = 4
 
 	desktopTrayMFString        = 0
+	desktopTrayMFGrayed        = 0x0001
+	desktopTrayMFChecked       = 0x0008
 	desktopTrayMFPopup         = 0x0010
 	desktopTrayMFSeparator     = 0x0800
 	desktopTrayTPMRightButton  = 0x0002
@@ -98,17 +101,24 @@ const (
 	desktopTrayAdmin
 	desktopTrayStartRemote
 	desktopTrayQuit
+	desktopTrayStopRemote
+	desktopTrayRestartRemote
 )
 
 // desktopTrayCallbacks 是托盘菜单触发的全部动作。后台启停不在托盘：
 // 退出重开即等价于重启，失败页文案直接引导（见 statuspage.go）。
-// 「启用远程服务」是本机模式（D25）按需补起 relay + connector 的唯一入口。
+// 远程链路的启用/停止/重启与管理入口共用协调器，菜单每次展开都读取最新状态。
 type desktopTrayCallbacks struct {
-	onShow    func()
-	onBrowser func()
-	onAdmin   func()
-	onRemote  func()
-	onQuit    func()
+	onShow             func()
+	onBrowser          func()
+	onAdmin            func()
+	onRemote           func()
+	onStopRemote       func()
+	onRestartRemote    func()
+	onQuit             func()
+	remoteState        func() remoteMenuState
+	stopRemoteState    func() remoteMenuState
+	restartRemoteState func() remoteMenuState
 }
 
 type desktopTrayPoint struct {
@@ -158,26 +168,31 @@ type desktopTrayIconData struct {
 }
 
 type desktopTrayState struct {
-	hwnd           uintptr
-	instance       uintptr
-	className      *uint16
-	classReady     bool
-	menu           uintptr
-	icon           uintptr
-	iconOwned      bool
-	iconAdded      bool
-	destroyed      bool
-	closeMu        sync.Mutex
-	closed         bool
-	running        bool
-	taskbarCreated uint32
-	mu             sync.Mutex
-	tipText        [128]uint16
-	onShow         func()
-	onBrowser      func()
-	onAdmin        func()
-	onRemote       func()
-	onQuit         func()
+	hwnd               uintptr
+	instance           uintptr
+	className          *uint16
+	classReady         bool
+	menu               uintptr
+	icon               uintptr
+	iconOwned          bool
+	iconAdded          bool
+	destroyed          bool
+	closeMu            sync.Mutex
+	closed             bool
+	running            bool
+	taskbarCreated     uint32
+	mu                 sync.Mutex
+	tipText            [128]uint16
+	onShow             func()
+	onBrowser          func()
+	onAdmin            func()
+	onRemote           func()
+	onStopRemote       func()
+	onRestartRemote    func()
+	onQuit             func()
+	remoteState        func() remoteMenuState
+	stopRemoteState    func() remoteMenuState
+	restartRemoteState func() remoteMenuState
 }
 
 func desktopTrayError(operation string, callErr error) error {
@@ -339,6 +354,12 @@ func (tray *desktopTrayState) init() (err error) {
 	if err = appendDesktopTrayMenu(tray.menu, desktopTrayMFString, desktopTrayStartRemote, "启用远程服务"); err != nil {
 		return err
 	}
+	if err = appendDesktopTrayMenu(tray.menu, desktopTrayMFString, desktopTrayStopRemote, "停止远程服务"); err != nil {
+		return err
+	}
+	if err = appendDesktopTrayMenu(tray.menu, desktopTrayMFString, desktopTrayRestartRemote, "重启远程服务"); err != nil {
+		return err
+	}
 	if ok, _, callErr := desktopTrayAppendMenu.Call(tray.menu, desktopTrayMFSeparator, 0, 0); ok == 0 {
 		desktopTrayError("AppendMenuW", callErr)
 	}
@@ -346,8 +367,58 @@ func (tray *desktopTrayState) init() (err error) {
 		return err
 	}
 	desktopTraySetMenuDefaultItem.Call(tray.menu, desktopTrayShow, 0)
+	if err = tray.updateRemoteMenu(); err != nil {
+		return err
+	}
 	if err = tray.addIcon(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (tray *desktopTrayState) remoteMenu() remoteMenuState {
+	if tray.remoteState == nil {
+		return remoteMenuState{Label: "远程服务不可用"}
+	}
+	return tray.remoteState()
+}
+
+func (tray *desktopTrayState) actionMenu(id uintptr) remoteMenuState {
+	switch id {
+	case desktopTrayStopRemote:
+		if tray.stopRemoteState != nil {
+			return tray.stopRemoteState()
+		}
+		return remoteMenuState{Label: "停止远程服务"}
+	case desktopTrayRestartRemote:
+		if tray.restartRemoteState != nil {
+			return tray.restartRemoteState()
+		}
+		return remoteMenuState{Label: "重启远程服务"}
+	default:
+		return tray.remoteMenu()
+	}
+}
+
+// 原生菜单只在其消息线程修改；下一次右键必定显示最新快照。
+func (tray *desktopTrayState) updateRemoteMenu() error {
+	for _, id := range []uintptr{desktopTrayStartRemote, desktopTrayStopRemote, desktopTrayRestartRemote} {
+		state := tray.actionMenu(id)
+		flags := uintptr(desktopTrayMFString)
+		if !state.Enabled {
+			flags |= desktopTrayMFGrayed
+		}
+		if state.Checked {
+			flags |= desktopTrayMFChecked
+		}
+		text, err := syscall.UTF16PtrFromString(state.Label)
+		if err != nil {
+			return err
+		}
+		ok, _, callErr := desktopTrayModifyMenu.Call(tray.menu, id, flags, id, uintptr(unsafe.Pointer(text)))
+		if ok == 0 {
+			return desktopTrayError("ModifyMenuW", callErr)
+		}
 	}
 	return nil
 }
@@ -362,16 +433,38 @@ func (tray *desktopTrayState) invoke(id uintptr) {
 	case desktopTrayAdmin:
 		callback = tray.onAdmin
 	case desktopTrayStartRemote:
+		// 菜单显示后状态可能已经变化，分发前再拒绝不可用或重复操作。
+		if !tray.remoteMenu().Enabled {
+			return
+		}
 		callback = tray.onRemote
+	case desktopTrayStopRemote, desktopTrayRestartRemote:
+		if !tray.actionMenu(id).Enabled {
+			return
+		}
+		if id == desktopTrayStopRemote {
+			callback = tray.onStopRemote
+		} else {
+			callback = tray.onRestartRemote
+		}
 	case desktopTrayQuit:
 		callback = tray.onQuit
 	}
 	if callback != nil {
-		go callback()
+		if id == desktopTrayStartRemote || id == desktopTrayStopRemote || id == desktopTrayRestartRemote {
+			// 协调器只同步占位，必须在返回消息循环前禁用重复动作。
+			callback()
+		} else {
+			go callback()
+		}
 	}
 }
 
 func (tray *desktopTrayState) showMenu() {
+	if err := tray.updateRemoteMenu(); err != nil {
+		log.Printf("更新远程服务菜单失败：%v", err)
+		return
+	}
 	var cursor desktopTrayPoint
 	if ok, _, _ := desktopTrayGetCursorPos.Call(uintptr(unsafe.Pointer(&cursor))); ok == 0 {
 		return
@@ -579,7 +672,9 @@ func startWindowsTray(callbacks desktopTrayCallbacks) (*desktopTrayHandle, error
 		defer close(done)
 		tray := &desktopTrayState{
 			onShow: callbacks.onShow, onBrowser: callbacks.onBrowser, onAdmin: callbacks.onAdmin,
-			onRemote: callbacks.onRemote, onQuit: callbacks.onQuit,
+			onRemote: callbacks.onRemote, onQuit: callbacks.onQuit, remoteState: callbacks.remoteState,
+			onStopRemote: callbacks.onStopRemote, onRestartRemote: callbacks.onRestartRemote,
+			stopRemoteState: callbacks.stopRemoteState, restartRemoteState: callbacks.restartRemoteState,
 		}
 		if err := tray.init(); err != nil {
 			ready <- startup{err: err}

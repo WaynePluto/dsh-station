@@ -127,6 +127,7 @@ export const BUILD_ARTIFACTS = [
 export const SHELL_OVERLAY_FILES = [
   'node_modules/@dsh-station/dsh-plugin-remote-privileged/dsh-overlay.yml',
   'node_modules/@dsh-station/dsh-plugin-remote-privileged/model-bootstrap.mjs',
+  'node_modules/@dsh-station/dsh-plugin-remote-privileged/theme-projection.mjs',
 ]
 
 /** 第三方插件发行介质由 plugin-catalog.json 唯一驱动。 */

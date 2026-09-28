@@ -19,6 +19,7 @@ import {
   SETUP_PATH_PREFIX,
 } from '../admin/setup-app.js'
 import { readThemePreference, resolveThemeSwitch, THEME_PATH } from '../admin/theme.js'
+import { ADMIN_THEME_EVENTS_PATH } from '../admin/theme-client.js'
 import type { BrowserAuthenticator } from '../auth/browser.js'
 import type { BrowserCookiePolicy } from '../auth/cookies.js'
 import { isLoopbackBrowserRequest } from '../auth/loopback.js'
@@ -249,6 +250,7 @@ export function createBrowserServer(
     } else {
       const authorization = await browserAuth.authorize(req)
       if (!authorization.ok) {
+        if (path.pathname === ADMIN_THEME_EVENTS_PATH) { sendHttp(res, 401, authorization.message); return }
         if (req.method === 'GET' || req.method === 'HEAD') redirectToLogin(req, res)
         else sendHttp(res, authorization.status, authorization.message)
         return
@@ -259,6 +261,7 @@ export function createBrowserServer(
         : {
             userId: authorization.principal.userId,
             username: authorization.principal.username,
+            sessionId: authorization.principal.sessionId,
             setCookieHeaders,
           }
     }

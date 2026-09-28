@@ -74,6 +74,64 @@ token 只保存在当前控制信道的内存状态中，不写数据库或日�
 这些资源不读数据库、不反射机器状态、不进隧道。图标不占用 dsh 的 favicon 路径。
 新增公开资源前必须确认内容不会因用户、机器或配置变化。
 
+### 本机启动页的脚本例外
+
+登录、首次设置与远程离线页维持 `default-src 'none'` 的无脚本策略；管理页仅增加下述只读主题脚本例外。loopback socket +
+loopback Host 的启动 splash 使用独立 CSP：`script-src` 只允许构建内容的 SHA-256 哈希，
+`connect-src 'self'` 只允许同源探测；不使用 `unsafe-inline` 放开脚本，不增加公开状态接口。
+固定脚本串行 GET 当前 URL，不解析 dsh 协议、不跟随或读取 token 重定向，收到成功或重定向
+后重载当前页，由原有导航完成 cookie 交换。探测仍经过认证与 Host/Origin/sec-fetch-site 检查。
+等待期间保留原文档以避免转圈重置；禁用脚本时退回每秒刷新。
+
+### 管理页只读主题流
+
+- 管理三页、确认页忽略独立主题 Cookie，首屏使用本机 `dsh-theme.json` 安全投影；
+  壳级插件从原生已提交配置产生此文件，relay 只读工作站自有协议，不读取或修改原生profile。
+- 管理页 CSP 仅额外允许固定脚本的 SHA-256 与 `connect-src 'self'`；不放开任意内联脚本、CORS或Go绑定来源。
+  脚本只修改根节点 `data-theme`，不访问Cookie、不提交设置、不重载页面或触碰表单草稿。
+- `GET /_admin/theme/events` 位于既有管理认证后，单独复核合法Host与精确同源Origin；
+  无Origin时要求same-origin Fetch Metadata。拒绝same-site/cross-site、错误scheme/端口、查询串、非GET与非NDJSON Accept。
+  loopback豁免仍要求socket与Host双成立，并核对实际端口。未认证流返回401，不跳转登录。
+- NDJSON只含版本与三态主题；no-store、nosniff、禁止代理缓冲。最多32条流、同用户/loopback来源最多8条；
+  每帧128字节、队列1024字节、写入3秒上限，背压立即关闭。单连接5分钟，到期重新认证续租。
+- 25秒空行保活不查询原生主题或读取文件；发送主题或保活前复核数据库会话有效期、吊销、用户禁用及TOTP状态，
+  流内不旋转凭据。退出/断开释放订阅和timer，停止期间拒绝新流。
+- 客户端6分钟兜底取消；断线1~30秒退避重连，401/403/404或坏帧停止并保留颜色。
+  pagehide取消、bfcache恢复重连；无主题状态轮询。关闭dsh或投影异常不抹去有效缓存，初始无缓存时system。
+- 登录/首次设置的公开 `/_theme` 仍只修改本浏览器Cookie，绝不能由它写入宿主主题。
+
+### 桌面启动与按需管理加载页
+
+`dev:desktop` 与桌面发行版在启动期间，以及用户选择打开管理页时，由壳创建临时
+`127.0.0.1:0` HTTP 服务。启动加载服务不启动 relay/connector。
+32 字节随机能力路径保护只读页面/状态；校验 socket、精确 Host，状态接口要求同源
+Origin/Fetch Metadata，不提供 CORS、启用/重试/执行接口或业务代理。能力页面允许顶层导航，
+拒绝 iframe/跨站子资源；HTTP 访问本身绝不触发远程启用。仅菜单通过既有 stdin 控制通道启用。
+
+页面使用固定脚本/样式 CSP 哈希、no-store/no-referrer，状态只返回安全错误分类与严格校验的
+`http://127.0.0.1:<端口>/_admin` 目标，不包含 dsh token 或原始日志。服务限制 32 个连接与
+请求超时，最长 10 分钟，完成后 30 秒关闭，壳退出立即回收。它不是常驻浏览器唤起服务。
+
+加载页仅发起一次 `/events` 同源 fetch，以 NDJSON 状态流接收事件；保留 credentials:omit、
+redirect:error、no-store/no-referrer，不自动重连或轮询。单帧上限8KiB，UTF-8/JSON/状态类型严格校验；
+保留 `/status` 仅供只读诊断。流式路由空闲期间解除普通3秒写期限，每次写入/flush仍限3秒，
+启动/管理流分别有150/45秒总期限；客户端155秒兜底。页面取消、终态及服务退出均关闭流。
+快照与变更信号同锁获取，壳侧失败也广播；推送前只投影安全视图，绝不序列化包含token的完整后台快照。
+
+启动页的状态只包含固定阶段/错误文案，不下发 URL 或 token。资产入口先立即 302 到 loopback
+加载文档；就绪后脚本仅导航同源能力路径下的 `/enter`，Go 复核状态与既有配置地址后以无正文
+302 代发 dsh token。该入口仅允许 GET 顶层导航，拒绝跨站/跨端口发起、iframe、fetch 与查询串；
+不接受调用方指定目标，不写入状态、不代理请求。跳到 dsh 是同站顶层导航，认证与 fence 原样执行。
+启动等待上限 150 秒；失败保留安全提示，原始日志不进入页面。
+
+Wails 无参管理导航绑定仅允许启动配置握手中确认的 dsh/relay 精确 origin，不使用端口通配符。
+托盘停止/重启仅经 stdin 控制受管 relay/connector，不新增 HTTP 控制接口、清除认证配置或重启 dsh。
+关闭远程前，壳通过原有 WindowExecJS 对内置页面执行精确 relay origin 检查，仅匹配时返回已校验的
+本机 dsh 认证入口；停止后导航完成时再次检查迟到页面。token 不进入日志、管理 HTML 或状态流，
+不新增页面绑定或放宽来源白名单；直连工作台与外部浏览器不强制导航。
+启用阶段失败仅回收本次 relay/connector；已就绪后 connector 致命退出（含设备移除）、dsh
+故障及 CLI/服务版仍遵守整套停机语义。首次本机认证与所有非 loopback 访问认证边界不变。
+
 ## 4. 部署要求
 
 - 公网必须 HTTPS/WSS。relay 监听 loopback，由 Caddy/nginx 终结 TLS并保留原始 Host；反向代理只匹配配置的裸域名与泛子域名，并拒绝以 loopback/IP Host 命中公网站点，避免外部请求被误认为 loopback。

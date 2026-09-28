@@ -1,13 +1,15 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { connectorArguments, resolveConnectorEntry } from '../src/connector.js'
-import { dshArguments, dshTokenFromLine, preparePnpmShim, skippedBundleFromLine, withBundledPnpmPath } from '../src/dsh.js'
+import { DEV_RUNTIME_ENV_NAME, dshArguments, dshTokenFromLine, preparePnpmShim, resolveDshBin, resolveDshInstallAnchor, resolvePnpmCli, skippedBundleFromLine, withBundledPnpmPath } from '../src/dsh.js'
 import {
   PLUGIN_OVERLAY_FILE,
   SHELL_PLUGIN_PACKAGES,
+  SHELL_PLUGIN_RUNTIME_FILES,
   resolveDshPluginOverlays,
 } from '../src/dsh-plugins.js'
 import { LauncherError } from '../src/errors.js'
@@ -16,7 +18,7 @@ const DSH_BIN = join('C:', 'green', 'node_modules', '@deepseek-ai', 'dsh', 'lib'
 
 /** 接受壳级 overlay 的 `exists` 谓词。 */
 const installedAt = (roots: Readonly<Record<string, string>>) => (path: string): boolean =>
-  SHELL_PLUGIN_PACKAGES.some(name => path === join(roots[name] as string, PLUGIN_OVERLAY_FILE))
+  SHELL_PLUGIN_PACKAGES.some(name => [PLUGIN_OVERLAY_FILE, ...SHELL_PLUGIN_RUNTIME_FILES].some(file => path === join(roots[name] as string, file)))
 
 describe('dsh arguments', () => {
   it('runs mode A: loopback bind plus every authority a browser may send', () => {
@@ -196,6 +198,8 @@ describe('dsh shell plugin overlay', () => {
     expect(overlay).toContain('modelCapabilitiesBootstrap')
     expect(overlay).toContain("name: './model-bootstrap.mjs'")
     expect(existsSync(join(root, 'model-bootstrap.mjs'))).toBe(true)
+    expect(overlay).toContain("name: './theme-projection.mjs'")
+    expect(existsSync(join(root, 'theme-projection.mjs'))).toBe(true)
   })
 
   it('finds the overlay in packaged and workspace layouts', () => {
@@ -203,6 +207,11 @@ describe('dsh shell plugin overlay', () => {
       .toEqual(SHELL_PLUGIN_PACKAGES.map(name => join(deployedRoots[name] as string, PLUGIN_OVERLAY_FILE)))
     expect(resolveDshPluginOverlays(source, installedAt(workspaceRoots)))
       .toEqual(SHELL_PLUGIN_PACKAGES.map(name => join(workspaceRoots[name] as string, PLUGIN_OVERLAY_FILE)))
+  })
+
+  it.each(SHELL_PLUGIN_RUNTIME_FILES)('refuses incomplete shell runtime: %s', (missing) => {
+    expect(() => resolveDshPluginOverlays(packed, path => installedAt(deployedRoots)(path) && !path.endsWith(missing)))
+      .toThrow(missing)
   })
 
   it('refuses to start without the shell overlay', () => {
@@ -224,5 +233,75 @@ describe('connector arguments', () => {
   it('preloads tsx only for a TypeScript entry point', () => {
     expect(connectorArguments({ path: 'src/cli.ts', needsTsx: true }, { home: '/home', dshPort: 3080 }).slice(0, 2))
       .toEqual(['--import', 'tsx'])
+  })
+})
+
+function writeRuntimeFile(root: string, path: string, content: string): void {
+  const target = join(root, path)
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, content)
+}
+
+describe('controlled development runtime resolution', () => {
+  const temporary: string[] = []
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true })
+  })
+  function runtime(): string {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'station-resolver-')))
+    temporary.push(root)
+    writeRuntimeFile(root, 'package.json', JSON.stringify({ name: 'dsh-station-development-runtime' }))
+    writeRuntimeFile(root, 'node_modules/@deepseek-ai/dsh/package.json', JSON.stringify({ name: '@deepseek-ai/dsh' }))
+    writeRuntimeFile(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js', '')
+    writeRuntimeFile(root, 'node_modules/pnpm/package.json', JSON.stringify({ name: 'pnpm', exports: { '.': './package.json' } }))
+    writeRuntimeFile(root, 'node_modules/pnpm/bin/pnpm.cjs', '')
+    return root
+  }
+
+  it('leaves release/CLI resolution unchanged without the explicit environment variable', () => {
+    vi.stubEnv(DEV_RUNTIME_ENV_NAME, undefined)
+    const require = createRequire(import.meta.url)
+    expect(resolveDshBin()).toBe(require.resolve('@deepseek-ai/dsh/lib/bin.js'))
+    expect(resolveDshInstallAnchor()).toBe(require.resolve('@deepseek-ai/dsh/package.json'))
+    expect(resolvePnpmCli()).toBe(join(dirname(require.resolve('pnpm')), 'bin', 'pnpm.cjs'))
+  })
+
+  it('uses the same isolated anchor for all three paths', () => {
+    const root = runtime()
+    vi.stubEnv(DEV_RUNTIME_ENV_NAME, root)
+    expect(resolveDshBin()).toBe(join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js'))
+    expect(resolveDshInstallAnchor()).toBe(join(root, 'node_modules/@deepseek-ai/dsh/package.json'))
+    expect(resolvePnpmCli()).toBe(join(root, 'node_modules/pnpm/bin/pnpm.cjs'))
+  })
+
+  it.each(['', './relative', repositoryRoot])('rejects an invalid or workspace anchor: %s', (root) => {
+    vi.stubEnv(DEV_RUNTIME_ENV_NAME, root)
+    for (const resolver of [resolveDshBin, resolveDshInstallAnchor, resolvePnpmCli]) {
+      expect(resolver).toThrow(DEV_RUNTIME_ENV_NAME)
+    }
+  })
+
+  it('rejects an unmarked directory', () => {
+    const root = runtime()
+    writeRuntimeFile(root, 'package.json', JSON.stringify({ name: 'unrelated' }))
+    vi.stubEnv(DEV_RUNTIME_ENV_NAME, root)
+    expect(resolveDshBin).toThrow(LauncherError)
+  })
+
+  it('refuses a runtime with a missing pnpm executable', () => {
+    const root = runtime()
+    rmSync(join(root, 'node_modules/pnpm/bin/pnpm.cjs'))
+    vi.stubEnv(DEV_RUNTIME_ENV_NAME, root)
+    expect(resolvePnpmCli).toThrow(DEV_RUNTIME_ENV_NAME)
+  })
+  it('does not fall back to a package reachable in an ancestor node_modules', () => {
+    const root = runtime()
+    const nested = join(root, 'nested')
+    writeRuntimeFile(nested, 'package.json', JSON.stringify({ name: 'dsh-station-development-runtime' }))
+    vi.stubEnv(DEV_RUNTIME_ENV_NAME, nested)
+    for (const resolver of [resolveDshBin, resolveDshInstallAnchor, resolvePnpmCli]) {
+      expect(resolver).toThrow(DEV_RUNTIME_ENV_NAME)
+    }
   })
 })

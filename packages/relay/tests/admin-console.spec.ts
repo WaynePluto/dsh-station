@@ -1,8 +1,10 @@
+import { ADMIN_THEME_SCRIPT } from '../src/admin/theme-client.js'
 import { once } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { PAGE_CSP, SPLASH_CSP } from '../src/admin/shared.js'
 import {
   ENROLL_TOKEN_SHOWN_ONCE_NOTICE,
   hashOpaqueToken,
@@ -157,12 +159,17 @@ describe('M2.5 admin console', () => {
     registerTestDevice(fixture.store, { machineId: 'machine-console-02', slug: 'srv' })
 
     const { body } = await openConsole(fixture)
-    expect(body).toContain('能从')
-    expect(body).toContain('打开的机器')
+    expect(body).toContain('<h1>机器</h1>')
+    expect(body).toContain('<h2 class="section">工作站列表</h2>')
     expect(body).toContain(MACHINE_ID)
     expect(body).toContain('<span class="badge on">在线</span>')
     expect(body).toContain('href="https://pc1.dsh.test/"')
     expect(body).toContain('<span class="badge off">离线</span>')
+    // 桌面占位由壳叠加，普通浏览器仍保留原来的24px/窄屏12px留白。
+    expect(body).toContain('body{--dsh-station-page-top-gap:24px;')
+    expect(body).toContain('padding:var(--dsh-station-page-top-gap) 16px 24px')
+    expect(body).toContain('@media(max-width:460px){body{--dsh-station-page-top-gap:12px;padding:var(--dsh-station-page-top-gap) 8px 12px}')
+    expect(body).toContain('body{place-items:start center}')
     // 离线机器没有可链接的访问入口。
     expect(body).not.toContain('href="https://srv.dsh.test/"')
   })
@@ -215,8 +222,9 @@ describe('M2.5 admin console', () => {
       cookie: `${fixture.sessionCookie}; ${csrfPair}`,
     })
     expect(confirm.status, confirm.body).toBe(200)
-    expect(confirm.body).toContain(`停止 ${MACHINE_SLUG} 上的 dsh-station`)
-    expect(confirm.body).toContain('dsh 进程会被一起停掉')
+    expect(confirm.body).toContain(`停止 ${MACHINE_SLUG} 并移除？`)
+    expect(confirm.body).toContain(`停止 ${MACHINE_SLUG} 的连接及工作站托管的 dsh`)
+    expect(confirm.body).toContain('对话记录保留')
     expect(confirm.body).toContain(`<a href="${ADMIN_PATH_PREFIX}">`)
     // 渲染页面不能触碰设备或其控制信道。
     expect(fixture.store.getDeviceByMachineId(MACHINE_ID)?.revokedAt).toBeNull()
@@ -240,7 +248,7 @@ describe('M2.5 admin console', () => {
 
     const { body } = await openConsole(fixture)
     expect(body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
-    expect(body).not.toContain('<script>')
+    expect([...body.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gu)].map(match => match[1])).toEqual([ADMIN_THEME_SCRIPT])
   })
 
   it('refuses to issue an enrollment token without a valid CSRF token', async () => {
@@ -364,7 +372,24 @@ describe('M2.5 admin console', () => {
       expect(local.headers['content-type']).toContain('text/html')
       expect(local.body).toContain('正在启动 DSH 工作站')
       expect(local.body).toContain('class="spin"')
-      expect(local.body).toContain('<meta http-equiv="refresh" content="0.2">')
+      expect(local.body).toContain('<noscript><meta http-equiv="refresh" content="1"></noscript>')
+      expect(local.body).not.toContain('content="0.2"')
+      expect(local.headers['content-security-policy']).toBe(SPLASH_CSP)
+      expect(local.body).toContain("redirect: 'manual'")
+      const probe = await httpRequest({
+        port: fixture.port,
+        path: '/',
+        headers: { accept: 'text/plain', 'sec-fetch-site': 'same-origin' },
+      })
+      expect(probe.status).toBe(502)
+      expect(probe.headers['content-type']).toContain('text/plain')
+      expect(probe.body).not.toContain('<script>')
+      const crossSite = await httpRequest({
+        port: fixture.port,
+        path: '/',
+        headers: { accept: 'text/plain', 'sec-fetch-site': 'cross-site' },
+      })
+      expect(crossSite.status).toBe(403)
       // 启动等待是应用体验的一部分：不得出现管理页的痕迹。
       expect(local.body).not.toContain('当前离线')
       expect(local.body).not.toContain(ADMIN_PATH_PREFIX)
@@ -389,6 +414,8 @@ describe('M2.5 admin console', () => {
     expect(navigation.headers['content-type']).toContain('text/html')
     expect(navigation.body).toContain('<!doctype html>')
     expect(navigation.body).toContain('pc1 当前离线')
+    expect(navigation.headers['content-security-policy']).toBe(PAGE_CSP)
+    expect(navigation.body).not.toContain('<script>')
     // 离线页承担启动等待：meta refresh 每秒重试，机器上线后顺着 303 进 dsh。
     expect(navigation.body).toContain('<meta http-equiv="refresh" content="1">')
     expect(navigation.body).toContain('自动重试')

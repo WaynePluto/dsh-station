@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -52,11 +53,13 @@ type backendWireMessage struct {
 	Urls       backendURLs  `json:"urls"`
 	AdminReady bool         `json:"adminReady"`
 	Message    string       `json:"message"`
-	// DshToken 只经 stdout 管道传输；本机模式（远程未启用）下壳在初始导航
-	// 302 与「在浏览器中打开」时代发一次 dsh 的 /?token= 交换（D25）。
+	// DshToken 只经 stdout 管道传输；本机模式下壳在顶层认证交接
+	// 与「在浏览器中打开」时代发一次 dsh 的 /?token= 交换（D25）。
 	DshToken string `json:"dshToken"`
-	// RemoteEnabled 表示 relay + connector 已按需启用；此后 URLs.Local 指向 relay。
-	RemoteEnabled bool `json:"remoteEnabled"`
+	// RemoteEnabled 表示按需启用的本机转发链路已就绪；启用中仍为 false，成功后 Local 指向 relay。
+	RemoteEnabled bool   `json:"remoteEnabled"`
+	RemoteState   string `json:"remoteState"`
+	RemoteError   string `json:"remoteError"`
 }
 
 // backendStatus 是 tray/状态页消费的快照；字段全部只读。
@@ -69,6 +72,8 @@ type backendStatus struct {
 	DshToken   string
 	// RemoteEnabled 且 relay 可达时走 relay 入口；否则 ready + DshToken 直连 dsh。
 	RemoteEnabled bool
+	RemoteState   string
+	RemoteError   string
 }
 
 func (s backendStatus) displayPhase() backendPhase {
@@ -88,11 +93,17 @@ type backendManager struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	exited  chan struct{} // 每次 Start 重建；awaitExit 在进程退出时关闭
-	// change 通知所有等待者「状态变了」；statusHandler 用它实现初始导航持有。
+	// change 通知配置握手、就绪探测与远程服务的等待者。
 	change   chan struct{}
 	onChange func(backendStatus)
 	// startGuard 防止 Start 并发重入；Stop 幂等，对未运行的后台是空操作。
 	startGuard bool
+	// 远程请求先占位，再等待 launcher 的真实就绪；失败保留供托盘显示。
+	remoteRequested bool
+	remoteRequest   *remoteRequest
+	remoteError     string
+	// 首次握手锁定 dsh/relay 精确来源，后续状态不得悄悄换端口。
+	urlConfig *backendURLs
 }
 
 func newBackendManager(payload desktopPayload, token string, onChange func(backendStatus)) *backendManager {
@@ -114,26 +125,11 @@ func (m *backendManager) running() bool {
 func (m *backendManager) setStatus(status backendStatus) {
 	m.mu.Lock()
 	m.status = status
-	close(m.change)
-	m.change = make(chan struct{})
+	m.advanceRemoteLocked()
+	m.notifyLocked()
 	m.mu.Unlock()
 	if m.onChange != nil {
 		m.onChange(status)
-	}
-}
-
-// WaitForChange 等待下一次状态变更（或超时），返回当时的快照。
-// 超时返回当前状态且第二个返回值为 false。
-func (m *backendManager) WaitForChange(timeout time.Duration) (backendStatus, bool) {
-	m.mu.Lock()
-	wait := m.change
-	snapshot := m.status
-	m.mu.Unlock()
-	select {
-	case <-wait:
-		return m.Status(), true
-	case <-time.After(timeout):
-		return snapshot, false
 	}
 }
 
@@ -158,7 +154,10 @@ func (m *backendManager) Start() error {
 }
 
 func (m *backendManager) startLocked() error {
-	entry := filepath.Join(m.payload.packageDir, "dist", "index.js")
+	entry := m.payload.entry
+	if entry == "" {
+		entry = filepath.Join(m.payload.packageDir, "dist", "index.js")
+	}
 	command := exec.Command(m.payload.nodePath, entry, "--desktop")
 	command.Dir = m.payload.packageDir
 	command.Stderr = os.Stderr
@@ -189,18 +188,27 @@ func (m *backendManager) startLocked() error {
 	m.cmd = command
 	m.stdin = stdin
 	m.exited = exited
-	m.change = make(chan struct{})
 	m.status = backendStatus{Phase: phaseConfig, Detail: "后台进程已启动"}
+	m.remoteRequested = false
+	m.remoteRequest = nil
+	m.remoteError = ""
+	m.notifyLocked()
 	snapshot := m.status
 	m.mu.Unlock()
 
 	if m.onChange != nil {
 		m.onChange(snapshot)
 	}
-	go m.pump(stdout)
-	go m.awaitExit(command, exited)
+	stdoutDone := make(chan struct{})
+	go func() {
+		defer close(stdoutDone)
+		m.pump(stdout)
+	}()
+	go m.awaitExit(command, exited, stdoutDone)
 	return nil
 }
+
+var backendTokenPattern = regexp.MustCompile(`([?&]token=)[^&\s)]+`)
 
 // pump 逐行扫描 launcher 的 stdout，只处理桌面状态前缀行。
 func (m *backendManager) pump(stdout io.Reader) {
@@ -210,7 +218,7 @@ func (m *backendManager) pump(stdout io.Reader) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, backendLinePrefix) {
-			log.Printf("[后台] %s", line)
+			log.Printf("[后台] %s", backendTokenPattern.ReplaceAllString(line, "${1}[redacted]"))
 			continue
 		}
 		m.applyLine(line[len(backendLinePrefix):])
@@ -239,10 +247,21 @@ func (m *backendManager) applyLine(payload string) {
 			AdminReady:    message.AdminReady,
 			DshToken:      message.DshToken,
 			RemoteEnabled: message.RemoteEnabled,
+			RemoteState:   message.RemoteState,
+			RemoteError:   message.RemoteError,
 		}
 		if message.Urls.Local != "" {
-			status.HasURLs = true
-			status.URLs = message.Urls
+			if err := validateBackendURLs(message.Urls); err != nil || (m.urlConfig != nil &&
+				(message.Urls.Admin != m.urlConfig.Admin || message.Urls.Dsh != m.urlConfig.Dsh)) {
+				status = backendStatus{Phase: phaseFailed, Detail: "后台上报了无效或变化的本机入口，已拒绝导航"}
+			} else {
+				status.HasURLs = true
+				status.URLs = message.Urls
+				if m.urlConfig == nil {
+					urls := message.Urls
+					m.urlConfig = &urls
+				}
+			}
 		}
 		m.status = status
 	case "exit":
@@ -252,14 +271,18 @@ func (m *backendManager) applyLine(payload string) {
 		m.mu.Unlock()
 		return
 	}
+	m.advanceRemoteLocked()
 	snapshot := m.status
+	m.notifyLocked()
 	m.mu.Unlock()
 	if m.onChange != nil {
 		m.onChange(snapshot)
 	}
 }
 
-func (m *backendManager) awaitExit(command *exec.Cmd, exited chan struct{}) {
+func (m *backendManager) awaitExit(command *exec.Cmd, exited chan struct{}, stdoutDone <-chan struct{}) {
+	// 先读完状态管道，避免 Wait 关闭 StdoutPipe 或退出兜底抢先覆盖最后一条失败原因。
+	<-stdoutDone
 	_ = command.Wait()
 	m.mu.Lock()
 	m.cmd = nil
@@ -267,28 +290,17 @@ func (m *backendManager) awaitExit(command *exec.Cmd, exited chan struct{}) {
 	planned := m.status.Phase == phaseStopping
 	if planned {
 		m.status = backendStatus{Phase: phaseOffline}
-	} else {
+	} else if m.status.Phase != phaseFailed {
+		// launcher 已上报的具体失败原因不能被退出兜底文案覆盖。
 		m.status = backendStatus{Phase: phaseFailed, Detail: "后台进程意外退出"}
 	}
 	snapshot := m.status
+	m.notifyLocked()
 	m.mu.Unlock()
 	close(exited)
 	if m.onChange != nil {
 		m.onChange(snapshot)
 	}
-}
-
-// StartRemote 请求按需启用远程服务（D25）：launcher 补起 relay + connector。
-// 后台不在运行时是空操作（托盘项只在后台存活时可用）。
-func (m *backendManager) StartRemote() {
-	m.mu.Lock()
-	command := m.cmd
-	stdin := m.stdin
-	m.mu.Unlock()
-	if command == nil || stdin == nil {
-		return
-	}
-	_, _ = stdin.Write([]byte("{\"type\":\"start-remote\"}\n"))
 }
 
 // Stop 请求后台优雅退出，超过宽限期按平台兜底杀死进程树。幂等。
@@ -300,6 +312,7 @@ func (m *backendManager) Stop() error {
 	if command == nil {
 		if m.status.Phase != phaseOffline {
 			m.status = backendStatus{Phase: phaseOffline}
+			m.notifyLocked()
 			snapshot := m.status
 			m.mu.Unlock()
 			if m.onChange != nil {
@@ -312,6 +325,7 @@ func (m *backendManager) Stop() error {
 	}
 	if m.status.Phase != phaseStopping && m.status.Phase != phaseOffline {
 		m.status = backendStatus{Phase: phaseStopping}
+		m.notifyLocked()
 		snapshot := m.status
 		m.mu.Unlock()
 		if m.onChange != nil {

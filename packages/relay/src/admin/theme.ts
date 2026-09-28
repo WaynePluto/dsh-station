@@ -5,8 +5,8 @@ import type { BrowserCookiePolicy } from '../auth/cookies.js'
  * （`packages/client/ui-theme/src/theme-settings.ts`）相同的拼写，使机器控制台
  * 与其后的 dsh UI 提供相同选项，而不是两个相似选项。
  *
- * 此偏好只由我们维护：dsh 将自己的偏好保存在 settings 文档中，
- * relay 不得读写（它从不解析 dsh 协议），因此两者独立设置，各自记住自己的选择。
+ * 登录、首次设置和离线页独立用 Cookie 保存偏好。管理页不读取此 Cookie，
+ * 而是单向跟随 NativeTheme 的工作站安全投影；relay 不读写原生配置或解析 dsh 协议。
  */
 export type ThemePreference = 'light' | 'dark' | 'system'
 

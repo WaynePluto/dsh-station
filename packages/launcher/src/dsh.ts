@@ -1,7 +1,7 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { connect } from 'node:net'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { LauncherError } from './errors.js'
@@ -70,6 +70,41 @@ export function launcherDirectory(): string {
   return dirname(fileURLToPath(import.meta.url))
 }
 
+/** 仅受管开发 wrapper 设置；发行版/CLI 未设置时沿用原解析行为。 */
+export const DEV_RUNTIME_ENV_NAME = 'DSH_STATION_DEV_RUNTIME'
+
+function isWithin(directory: string, path: string): boolean {
+  const suffix = relative(directory, path)
+  return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`))
+}
+
+/** 三个入口共享同一个显式锚点；缺失时禁止向源码 node_modules 或全局包回退。 */
+function resolveRuntimeModule(specifier: string, suffix?: readonly string[]): string {
+  const configured = process.env[DEV_RUNTIME_ENV_NAME]
+  const modulePath = (anchor: string | URL): string => {
+    const found = createRequire(anchor).resolve(specifier)
+    return suffix === undefined ? found : join(dirname(found), ...suffix)
+  }
+  if (configured === undefined) return modulePath(import.meta.url)
+  try {
+    if (!isAbsolute(configured)) throw new Error('开发运行时必须使用绝对路径')
+    const runtime = realpathSync(configured)
+    const sourceRoot = resolve(launcherDirectory(), '..', '..', '..')
+    if (isWithin(sourceRoot, runtime)) throw new Error('开发运行时必须位于源码工作区之外')
+    const anchor = join(runtime, 'package.json')
+    const manifest = JSON.parse(readFileSync(anchor, 'utf8')) as { name?: unknown }
+    if (manifest.name !== 'dsh-station-development-runtime') throw new Error('不是受控的隔离开发运行时')
+    const found = realpathSync(modulePath(anchor))
+    if (!isWithin(join(runtime, 'node_modules'), found)) throw new Error('开发模块解析越过了隔离运行时边界')
+    return found
+  } catch (error) {
+    throw new LauncherError(`无法从 ${DEV_RUNTIME_ENV_NAME} 解析 ${specifier}。`, {
+      hint: '请通过 pnpm dev:desktop 重新准备隔离开发运行时；不会回退到源码工作区的同名包。',
+      cause: error,
+    })
+  }
+}
+
 /**
  * 内嵌 dsh 入口点的绝对路径。
  *
@@ -81,8 +116,9 @@ export function launcherDirectory(): string {
  */
 export function resolveDshBin(): string {
   try {
-    return createRequire(import.meta.url).resolve('@deepseek-ai/dsh/lib/bin.js')
+    return resolveRuntimeModule('@deepseek-ai/dsh/lib/bin.js')
   } catch (error) {
+    if (error instanceof LauncherError) throw error
     throw new LauncherError(
       '找不到随包携带的 dsh（@deepseek-ai/dsh）。',
       { hint: '这个绿色包的 node_modules 不完整，请重新解压一份完整的包。', cause: error })
@@ -92,8 +128,9 @@ export function resolveDshBin(): string {
 /** dsh 的安装 manifest；官方插件管理器用它区分安装自带包与 profile 依赖。 */
 export function resolveDshInstallAnchor(): string {
   try {
-    return createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')
+    return resolveRuntimeModule('@deepseek-ai/dsh/package.json')
   } catch (error) {
+    if (error instanceof LauncherError) throw error
     throw new LauncherError(
       '找不到随包携带的 dsh package.json。',
       { hint: '这个绿色包的 node_modules 不完整，请重新解压一份完整的包。', cause: error },
@@ -104,8 +141,9 @@ export function resolveDshInstallAnchor(): string {
 /** 随 launcher 分发的 pnpm CLI，用于无全局 pnpm 的绿色包插件管理。 */
 export function resolvePnpmCli(): string {
   try {
-    return join(dirname(createRequire(import.meta.url).resolve('pnpm')), 'bin', 'pnpm.cjs')
+    return resolveRuntimeModule('pnpm', ['bin', 'pnpm.cjs'])
   } catch (error) {
+    if (error instanceof LauncherError) throw error
     throw new LauncherError(
       '找不到随包携带的 pnpm。',
       { hint: '这个绿色包无法安装或升级插件，请重新解压一份完整的包。', cause: error },

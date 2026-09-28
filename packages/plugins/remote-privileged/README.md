@@ -1,21 +1,32 @@
-# 壳级运行时注入（remote-privileged）
+# 壳级基础设施
 
-`@dsh-station/dsh-plugin-remote-privileged` 由 launcher 作为唯一的壳级常驻 `--patch` overlay 传给 dsh，固定在首位且**不可停用**。它不属于第三方功能插件，承担两项运行时基础设施职责：
+此包由 launcher 通过 `--patch dsh-overlay.yml` 常驻加载，不进入可卸载的功能 Bundle。
 
-1. 为 `connection` 行注入 `webRuntime` 与 `webServer`，让插件 RPC 使用与 dsh 相同的 WebServer context。
-2. 固定 `llm-pi-ai` 的模型启动屏障，并提供启动期占位服务，使模型增强 Bundle 在线停用或重新启用时无需热重启上游 `llm-pi-ai`。
+- 为 connection 注入 webRuntime/webServer，保持统一 RPC 宿主上下文。
+- 模型增强未在启动时加载时，提供 root fiber 上的占位启动屏障。
+- 将 dsh 原生主题单向投影给工作站管理页，不修改任何原生设置。
 
-模型增强随进程启动时，`models-catalog` 与 `model-capabilities` 完成真实初始化后把屏障服务挂到 root fiber；未随进程启动时，`model-bootstrap.mjs` 提供占位屏障。屏障在进程内保持稳定，不会让已停用的模型增强界面或 RPC 继续存在。
+## 主题投影
 
-ownsHost 的远程设置能力已拆为 [远程体验 Bundle](../remote-experience/README.md) 中的
-[remote-settings](../remote-settings/README.md) 组件，可在 Bundle 详情中停用；本壳级注入不作为第三方功能包分发。
+`theme-projection.mjs` 为无外部依赖的宿主插件。launcher 和开发栈通过环境变量
+`DSH_STATION_THEME_FILE` 指定工作站 home 下 `dsh-theme.json` 的绝对路径；未指定则不启用。
 
-## 维护
+插件等待 loader 就绪，读取顶层活跃 `ui-theme` 行的 volatile `preference`，订阅
+`app-boot/config-reload` 的成功提交点。原子输出严格的 `{version:1,preference}`，
+值限 `light/dark/system`，最多1024 UTF-8字节，不写入URL、凭据或原生配置正文。
 
-升级 dsh 时复核：
+相同主题不重写；失败保留旧文件并输出固定诊断。插件释放时取消订阅和待执行工作，
+不删除最后投影。relay仅通过有界读取和目录watch消费此项目文件；没有回写通道。
+`system`由实际浏览设备解析，不同工作站独立。登录和首次设置页不接入此同步。
 
-- `connection` 行的 `webRuntime` / `webServer` 注入契约；
-- `llm-pi-ai` 的 `llm`、`modelsCatalogBootstrap`、`modelCapabilitiesBootstrap` 启动依赖；
-- 10 个随附 Bundle 的在线停用与重新启用冒烟。
+## 检查
 
-launcher、开发栈与绿色包检查清单都以 [dsh-plugins.ts](../../launcher/src/dsh-plugins.ts) 为准；上游契约见 [dsh 核实结论](../../../docs/02-dsh-facts.md)。
+- `pnpm --filter @dsh-station/dsh-plugin-remote-privileged test`
+- `pnpm --filter @dsh-station/protocol test`
+- `pnpm --filter @dsh-station/relay test`
+- 升级dsh时复核loader entry/config形状与重载提交事件，并用隔离profile验证原生
+  light/dark/system修改→投影→管理页事件更新；非法配置拒绝后投影应保持不变。
+- overlay及两个 `.mjs` 文件由launcher、开发栈和发行包清单检查，不依赖浏览器构建产物。
+
+源码契约与安全边界见 [插件机制](../../../docs/dsh/plugins.md#工作站只读主题投影)
+和 [管理页主题流](../../../docs/04-security.md#管理页只读主题流)。

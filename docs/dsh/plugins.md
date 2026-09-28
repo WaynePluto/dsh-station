@@ -110,6 +110,19 @@ launcher、开发栈和打包脚本必须同时检查宿主与浏览器产物。
 注册时 readFileSync 将 bundle 读成不可变快照，以 IMMUTABLE_CACHE 下发；只有 rebuilt() 会重读，
 该回调由 HMR watch 触发。dsh-station-web 没有 HMR，任何插件改动都必须构建并重启 dsh。
 
+## 原生客户端加载页
+
+出处：`packages/client/web/src/boot-page.ts`、`src/boot.ts`、
+`packages/client/ui-renderer/src/client/index.ts`；对照 0.1.7-rc.2 发布的 Web 前端产物确认。
+
+`AppWebEntry` 构造时创建 `BootPage`（`Loading plugins…`），随后在当前浏览器文档里
+预取、加载并激活客户端插件，最后交给 `uiRenderer` 挂载工作台；没有最短展示时间。
+桌面 launcher 的 ready/token 只表示后台可进入，不代表浏览器插件已经加载完成。
+壳的 loopback 加载页与原生 BootPage 是先后两份文档；前者不覆盖后者，也不能代替其加载阶段。
+未观察到原生提示不等于流程被跳过。隔离 WebView2 实测：热缓存样本的 BootPage 在
+130.4ms 被工作台替换，首次绘制为136ms，确实可能没有可见帧；冷缓存样本首绘后仍保留约165ms。
+测量方法、三次结果及边界见 [启动时序调研](../reference/startup-timing.md)。
+
 ## index.html 注入
 
 出处：`packages/host/webserver/src/index.ts`（`webserver/index-inject` 事件）、`src/injections.ts`。
@@ -124,10 +137,8 @@ global 行注入 `__DSH_TRANSPORT__`；browser-compat 用 head script 行在旧 
 Iterator/AbortSignal/Promise 能力，并建立当前页面内存中的诊断桥（函数体 `toString()` 序列化，
 必须自包含、不引用模块作用域）。client 半读取该桥显示临时日志，不向 Host 发 RPC。
 
-dsh web 自带 framework-free 启动页（wordmark HARNESS + “Loading plugins…” + 进度弧，`packages/client/web/src/boot-page.ts`）：
-boot 内核（`packages/client/web/src/boot.ts` 的 `AppWebEntry`）挂载 index 时立即绘制，随 client
-loader 条目激活增长；全部条目激活、React UI renderer 接管挂载点后卸载，插件加载失败时改为失败清单。
-它承担 relay 303 之后浏览器侧的插件加载等待，与工作站自己的启动 splash（服务侧等待，复刻此页样式）先后衔接。
+原生启动页承担认证交接之后的浏览器插件加载等待（见上文「原生客户端加载页」）。
+创建 DOM 不等于立即绘制；不能用 index 注入或 rAF 中看到该节点来保证用户一定看得到。
 
 ## 设置写入（dsh 0.1.7 重写）
 
@@ -273,6 +284,41 @@ React 重建或旧 WebKit flex 布局中丢失。升级检查包含 `navCell`/`n
 
 ## 主题与对齐
 
+### 原生主题偏好的作用域
+
+已按 0.1.7-rc.2 的 ui-theme、ui-settings、config-editor 发布产物核对；本地旧 checkout 不作为此结论基线。
+出处：`packages/client/ui-theme/src/{index.ts,theme-settings.ts,boot-theme.ts,client/index.ts}`、
+`packages/client/ui-settings/src/client/config-form.ts`、`packages/boot/config-editor/src/index.ts`。
+
+- 三态为 `light/dark/system`，默认 `system`；宿主配置为原生 `ui-theme` 行的 volatile `config.preference`。
+  ConfigEditor 写活动 profile 的 `cordis.patch.yml`，不是浏览器 localStorage；不由 relay 直接读写该文件。
+- 客户端公开服务为 `ctx.theme`：`getTheme()` 读快照，`setTheme()` 改偏好，`theme/change` 通知变化；
+  内部通过 `configForms.get('ui-theme')` 订阅配置。`setTheme()` 本身返回 void、先本地更新，不能当作持久化成功的回执。
+- 可访问宿主设置的客户端共享同一宿主/profile 的持久化偏好；不是每个浏览器独立保存。
+  缺少可写宿主设置时不能承诺跨客户端持久化同步。`system` 只共享选择，各设备自行按操作系统解析明暗。
+- 宿主每次 index 渲染注入当前偏好与启动配色，刷新时不依赖浏览器存储恢复。
+- 项目管理页按 D26 单向跟随此偏好；登录、首次设置和离线页仍使用独立 Cookie。
+  公开 `/_theme` GET 只改 Cookie，不接入宿主设置写入，也不影响管理页。
+
+### 工作站只读主题投影
+
+项目实现：`packages/plugins/remote-privileged/theme-projection.mjs`、
+`packages/protocol/src/theme-projection.ts`、`packages/relay/src/admin/{native-theme,theme-events,theme-client}.ts`。
+
+- 壳级插件等 `ctx.loader.await()` 完成，从 `loader.entries()` 定位 include 下唯一活跃的 `ui-theme` 行，
+  读 `fiber.config.preference.get()`；没有可用原生行时保留旧投影并输出固定诊断，不猜默认配置。
+- 订阅 `app-boot/config-reload`：`reconcileProfilePatches` 完成活跃性校验后广播，ConfigEditor 持久化修改会经过此路径。
+  原生 `settings.describe()` 返回完整描述列表，不接收 namespace 参数；不把定向 `loader/volatile-update` 当作全局事件。
+  来源：`packages/boot/app-boot/src/profile.ts`、`packages/boot/config-editor/src/index.ts`；已核对0.1.7-rc.2产物。
+- launcher/dev-stack 用 `DSH_STATION_THEME_FILE` 传绝对路径。插件原子写 `dsh-theme.json`，
+  严格只有 `{version:1,preference:light|dark|system}`，最多1024 UTF-8字节；不携带原生配置、URL或凭据。
+- relay 只读项目投影，以目录 `fs.watch` 覆盖原子替换，去重后通知管理页；坏文件/缺失保持进程内上次有效值，首次为system。
+  管理 HTML 直接带初值，固定哈希脚本单向消费 NDJSON，认证/连接寿命限制见 [安全](../04-security.md#管理页只读主题流)。
+- 隔离真实 dsh 原生 mutate 与 Chrome 管理页验证 dark→light→system、非法值拒绝；
+  同一文档和一条流内更新，草稿不变，CSP无违规。升级须复核上述loader/重载提交点与原生theme字段。
+
+### 视觉 token
+
 出处：`packages/client/ui-theme/src/styles/design-platform.css`、
 `packages/client/ui-primitives/src/icons/index.tsx`。
 
@@ -328,6 +374,17 @@ token 拼写和实际值是两件事，需用真实页面 getComputedStyle 检�
   Enter/Space、Tab/Escape 和选择后焦点归还。外部点击关闭不抢焦点；禁用时关闭菜单并拒绝选择。
 - Portal 首帧隐藏以测量尺寸；自动聚焦需等定位提交后（如可清理的下一帧），不能在同轮父 layout effect 中直接 focus。
 - Portal 的 React 键盘事件仍到达字段 owner，局部 Escape 应阻止冒泡，避免同时关闭父设置窗口。
+
+### 原生设置面板与桌面顶部留白
+
+出处：`packages/client/ui-settings-general/src/client/SettingsRoot.module.css`；已对照
+0.1.7-rc.2 的 `@deepseek-ai/dsh-client-ui-settings-general/lib/client.js`（本地源码 checkout 与适配基线不同）。
+设置 overlay 为 fixed/inset:0 的居中 flex；面板高度为
+`min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-top-clearance,24px))))`，
+外部留白来自视口高度限制和居中，不是标题/header 的 padding。
+项目 relay 管理页是顶部对齐的独立文档，不应复制整套 modal：其 `--dsh-station-page-top-gap`
+保留24px（窄屏12px）页面留白；桌面 `chromebar.go` 将36px标题栏占位与该值叠加，不能覆盖它。
+dsh 文档未定义该项目变量，沿用36px占位和border-box，不改变原生设置样式。
 
 ### Modal 弹窗
 

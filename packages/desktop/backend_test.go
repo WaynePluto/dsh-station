@@ -12,6 +12,13 @@ func newTestManager() *backendManager {
 	return newBackendManager(desktopPayload{}, "token", nil)
 }
 
+func TestBackendLogsRedactTokenURLs(t *testing.T) {
+	line := "[dsh] dsh web: http://127.0.0.1:3180/?token=private-token (LAN: unavailable)"
+	if got := backendTokenPattern.ReplaceAllString(line, "${1}[redacted]"); contains(got, "private-token") || !contains(got, "?token=[redacted]") {
+		t.Fatal("普通后台日志不能落盘浏览器 token")
+	}
+}
+
 func TestApplyLineAcceptsStatusMessages(t *testing.T) {
 	manager := newTestManager()
 	manager.applyLine(`{"type":"status","protocol":1,"phase":"ready","detail":"就绪","urls":{"local":"http://127.0.0.1:30809/","admin":"http://127.0.0.1:30809/_admin","dsh":"http://127.0.0.1:3080/"},"adminReady":false,"dshToken":"tok_base64url","remoteEnabled":true}`)

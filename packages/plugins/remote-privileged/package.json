@@ -7,6 +7,7 @@
   "files": [
     "dsh-overlay.yml",
     "model-bootstrap.mjs",
+    "theme-projection.mjs",
     "locale"
   ],
   "scripts": {

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import http from 'node:http'
 import { once } from 'node:events'
 import { Buffer } from 'node:buffer'
@@ -86,6 +89,7 @@ async function startFixture(): Promise<Fixture> {
   const sessionCookie = cookieHeader(new BrowserCookiePolicy({ mode: 'lan-http' }).sessionHeaders(tokens))
 
   const relay = createRelayServer({
+    home: mkdtempSync(join(tmpdir(), 'relay-integration-')),
     host: '127.0.0.1',
     port: 0,
     directSlug: HUB_SLUG,
@@ -158,6 +162,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map(async (fixture) => {
     for (const connector of fixture.connectors) connector.close()
     await fixture.relay.close()
+    rmSync(fixture.relay.config.home, { recursive: true, force: true })
     fixture.store.close()
     await Promise.all(fixture.upstreams.map(async upstream => new Promise<void>((resolve) => {
       upstream.server.close(() => resolve())

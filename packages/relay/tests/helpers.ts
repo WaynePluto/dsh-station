@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import http from 'node:http'
 import net from 'node:net'
 import pino from 'pino'
@@ -416,15 +419,19 @@ const defaultAuthenticatedRelay: RelayConfigOverrides = {
   browserAuth: { cookieMode: 'domain-https' },
 }
 
+const ownedHomes = new WeakMap<RelayServer, string>()
+
 async function listenRelayFixture(
   options: RelayFixtureStartOptions,
   store: RelayStore,
   authentication: AuthenticationService,
 ): Promise<RelayTestFixture> {
+  const home = options.relay.home ?? mkdtempSync(join(tmpdir(), 'relay-fixture-'))
   const relay = createRelayServer({
     host: '127.0.0.1',
     port: 0,
     ...options.relay,
+    home,
   }, {
     authentication,
     logger: pino({
@@ -432,6 +439,7 @@ async function listenRelayFixture(
     }),
     store,
   })
+  if (options.relay.home === undefined) ownedHomes.set(relay, home)
   const address = await relay.listen()
   return { relay, port: address.port, store }
 }
@@ -542,6 +550,8 @@ export async function closeFixtures<T extends RelayTestFixture>(
         await fixture.relay.close()
       } finally {
         fixture.store.close()
+        const home = ownedHomes.get(fixture.relay)
+        if (home !== undefined) rmSync(home, { recursive: true, force: true })
         await options.afterStoreClose?.(fixture)
       }
     }

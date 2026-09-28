@@ -57,33 +57,40 @@ export function isBrowserAuthority(value: string): boolean {
   }
 }
 
-function entryCard(view: MembershipView, machine: string): string {
-  const name = escapeHtml(machine)
+function entryCard(view: MembershipView): string {
   if (view.kind === 'unreadable') {
-    return `<p class="empty">读不出 ${escapeHtml(MEMBERSHIP_FILE_NAME)}：${escapeHtml(view.message)}<br>修好或删掉这个文件后刷新本页；在此之前 ${name} 没有远程入口。</p>`
+    return `<div class="hub">
+<h3>配置读取失败</h3>
+<p class="hint">修复 ${escapeHtml(MEMBERSHIP_FILE_NAME)} 后刷新，或清空损坏配置重新设置。</p>
+<details class="details"><summary>详细信息</summary><p class="meta">${escapeHtml(view.message)}</p></details>
+<div class="actions"><a class="danger-link" href="${ADMIN_MEMBERSHIP_LEAVE_PATH}">清空损坏配置…</a></div>
+</div>`
   }
   if (view.kind === 'none') {
-    return `<p class="empty">${name} 还没有远程入口，只能从它自己的地址打开（127.0.0.1 和局域网 IP）。用下面的表单设置一个——这不影响「机器」那一页里已经挂在 ${name} 上的机器。</p>`
+    return '<p class="empty">未设置远程入口</p>'
   }
   if (view.kind === 'self') {
     return `<div class="hub">
-<h3>${name} 已挂在自己身上（系统维护）</h3>
-<p class="meta">这是 dsh-station 自动维护的条目：没有它，本机和局域网地址就打不开 ${name} 的 dsh。<br>它在每次启动时自动重建，不需要也不能在这里取消。下面仍可粘贴别的机器的命令，把 ${name} 的远程入口改到那台机器上。</p>
+<h3>未设置远程入口</h3>
+<p class="hint">本机访问无需设置远程入口。</p>
 </div>`
   }
   const { hub } = view
   const authority = hub.browserAuthority === undefined
-    ? '<br>入口机器的浏览器地址 命令里没带（远程访问暂时用不了，回入口机器重新签一个令牌并重粘整条命令）'
-    : `<br>入口机器的浏览器地址 ${escapeHtml(hub.browserAuthority)}`
-  // 令牌本身从不渲染：它是 bearer secret，而承载它的页面
-  // 可能被刷新、截图或被旁人窥视。
+    ? ''
+    : `<br>浏览器地址 ${escapeHtml(hub.browserAuthority)}`
+  const warning = hub.browserAuthority === undefined
+    ? '<p class="hint">缺少浏览器地址，远程访问暂不可用。请到入口机器的「机器」页获取新令牌和完整连接命令。</p>'
+    : ''
+  // 令牌本身从不渲染，详情也只显示是否保存。
   const token = hub.enrollToken === undefined
-    ? `<br>注册令牌 无（入口机器已经认识 ${name} 的设备密钥时不需要）`
-    : '<br>注册令牌 已保存，等待入口机器接受（出于安全不显示）'
+    ? '<br>注册令牌 未保存'
+    : '<br>注册令牌 已保存（不显示）'
   return `<div class="hub">
-<h3>${name} 挂在一台入口机器上</h3>
-<p class="meta">入口机器地址 ${escapeHtml(hub.relayUrl)}<br>${name} 在那边的机器名 ${escapeHtml(hub.slug)}<br>挂上去的时间 ${escapeHtml(formatTime(hub.joinedAt))}${authority}${token}</p>
-<div class="actions"><a class="danger-link" href="${ADMIN_MEMBERSHIP_LEAVE_PATH}">取消这个远程入口…</a></div>
+<h3>已设置远程入口</h3>
+<p class="meta">入口地址 ${escapeHtml(hub.relayUrl)}<br>机器名 ${escapeHtml(hub.slug)}</p>
+${warning}<details class="details"><summary>详细信息</summary><p class="meta">设置时间 ${escapeHtml(formatTime(hub.joinedAt))}${authority}${token}</p></details>
+<div class="actions"><a class="danger-link" href="${ADMIN_MEMBERSHIP_LEAVE_PATH}">取消远程入口…</a></div>
 </div>`
 }
 
@@ -109,14 +116,16 @@ function reconnectCard(lastHub: MembershipLastHub, machine: string, csrf: string
   const name = escapeHtml(machine)
   const authority = lastHub.browserAuthority === undefined
     ? ''
-    : `<br>入口机器的浏览器地址 ${escapeHtml(lastHub.browserAuthority)}`
+    : `<br>浏览器地址 ${escapeHtml(lastHub.browserAuthority)}`
   return `<div class="hub">
 <h3>上次的远程入口</h3>
-<p class="meta">入口机器地址 ${escapeHtml(lastHub.relayUrl)}<br>${name} 在那边的机器名 ${escapeHtml(lastHub.slug)}<br>挂上去的时间 ${escapeHtml(formatTime(lastHub.joinedAt))}${authority}</p>
+<p class="meta">入口地址 ${escapeHtml(lastHub.relayUrl)}<br>机器名 ${escapeHtml(lastHub.slug)}</p>
+<details class="details"><summary>详细信息</summary><p class="meta">设置时间 ${escapeHtml(formatTime(lastHub.joinedAt))}${authority}</p></details>
+<p class="hint">重连无需新令牌；若入口已「停止并移除」${name}，请到入口机器的「机器」页获取新令牌和连接命令。</p>
 <form method="post" action="${ADMIN_MEMBERSHIP_RECONNECT_PATH}">
 <input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<button type="submit">重新连接这个远程入口</button></form>
-<p class="hint">重新连接不需要注册令牌：入口机器还保存着 ${name} 的设备密钥。如果那边已经「停止并移除」过 ${name}，重连不会成功——本页会回到现在的样子，需要回入口机器重新签发令牌再粘一次。</p>
+<p class="hint">重新连接会自动重启 dsh，访问会短暂中断。</p>
+<button type="submit">重新连接</button></form>
 </div>`
 }
 
@@ -132,13 +141,14 @@ function reconnectCard(lastHub: MembershipLastHub, machine: string, csrf: string
 function restartStatusCard(status: DshRestartStatus, machine: string): string {
   const name = escapeHtml(machine)
   const what = describeTrustChange(status)
+  const details = `<details class="details"><summary>详细信息</summary><p class="meta">${what}<br>${escapeHtml(formatTime(status.at))}${status.state === 'failed' ? `<br>${escapeHtml(status.error ?? '未知原因')}` : ''}</p></details>`
   if (status.state === 'restarting') {
-    return `<div class="restart" data-state="restarting" role="status"><strong>正在自动重启 dsh</strong>（${what}）。重启期间 ${name} 的本机和远程访问会短暂中断；完成后刷新本页查看结果。</div>`
+    return `<div class="restart" data-state="restarting" role="status"><strong>正在自动重启 dsh</strong><p>${name} 的本机和远程访问会短暂中断，请稍后刷新本页查看结果。</p>${details}</div>`
   }
   if (status.state === 'failed') {
-    return `<div class="restart" data-state="failed" role="alert"><strong>自动重启 dsh 失败</strong>（${what}）：${escapeHtml(status.error ?? '未知原因')}。<br>请右键托盘图标选择「重启」（Linux/macOS 重新运行启动脚本），让 ${name} 带上新的信任地址再启动一次。</div>`
+    return `<div class="restart" data-state="failed" role="alert"><strong>自动重启 dsh 失败</strong><p>请在 ${name} 上退出并重新打开工作站。</p>${details}</div>`
   }
-  return `<div class="restart" data-state="done"><strong>dsh 已自动重启完成</strong>（${what}，${escapeHtml(formatTime(status.at))}）。${name} 现在信任新的地址，已打开的浏览器页面会自动重连。</div>`
+  return `<div class="restart" data-state="done"><strong>dsh 已重启</strong>${details}</div>`
 }
 
 /**
@@ -148,8 +158,8 @@ function restartStatusCard(status: DshRestartStatus, machine: string): string {
 function doneNotice(done: 'leave' | 'reconnect', machine: string): string {
   const name = escapeHtml(machine)
   const text = done === 'leave'
-    ? `已提交取消：${name} 的 connector 正在断开与入口的连接，dsh 正在自动重启以撤销对入口地址的信任——稍后刷新本页查看最新状态。`
-    : `已提交重新连接：${name} 的 connector 正在拨向入口机器，dsh 正在自动重启以恢复信任地址——稍后刷新本页查看最新状态。`
+    ? `已提交取消 ${name} 的远程入口。dsh 将自动重启，访问会短暂中断；请稍后刷新本页查看状态。`
+    : `已提交重新连接 ${name} 的远程入口，连接结果尚待确认。dsh 将自动重启，请稍后刷新本页查看状态。`
   return `<p class="notice" role="status">${text}</p>`
 }
 
@@ -171,7 +181,6 @@ export function hubPage(options: {
   error?: string
 }): string {
   const { view, csrf, machine } = options
-  const name = escapeHtml(machine)
   const alert = options.error === undefined
     ? ''
     : `<p class="error" role="alert">${escapeHtml(options.error)}</p>`
@@ -190,16 +199,17 @@ export function hubPage(options: {
     current: ADMIN_HUB_PATH,
     machine,
     title: '远程入口',
-    heading: `${name} 的远程入口`,
-    intro: `「机器」那一页是<strong>别的机器挂在 ${name} 上</strong>，在那里停止并移除一台机器，停的是对方那台机器上的 dsh-station；这一页是 <strong>${name} 挂在别人身上</strong>，取消只影响 ${name} 自己，那边的机器一台都不会掉线。${name} 同时只能有一个远程入口。`,
+    heading: '远程入口',
+    intro: '通过其他机器访问本机，同时仅使用一个远程入口。',
     username: options.username,
     appearance: options.appearance,
-    body: `${notice}${alert}${entryCard(view, machine)}${reconnect}${restart}
+    body: `${notice}${alert}${entryCard(view)}${reconnect}${restart}
 <h2 class="section">设置远程入口</h2>
-<p class="hint">到你想用作入口的那台机器上，在它控制台的「机器」页签发一个注册令牌，它会给出一条完整命令；把那条命令整个粘到下面。地址、${name} 在那边的机器名、注册令牌都在命令里，不用再分开填。粘好后 dsh 会自动重启以信任新的地址，本页会显示重启进度。</p>
+<p class="hint">到入口机器的「机器」页获取连接命令，完整粘贴到下方。</p>
 <form method="post" action="${ADMIN_MEMBERSHIP_JOIN_PATH}">
 <input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<div class="field"><label for="hubCommand">粘贴入口机器给出的 connector 命令</label><input class="paste" id="hubCommand" name="command" required maxlength="2048" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="dsh-station-connector --relay wss://… --slug … --enroll-token … --hub-authority …"></div>
+<div class="field"><label for="hubCommand">连接命令</label><input class="paste" id="hubCommand" name="command" required maxlength="2048" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="dsh-station-connector --relay wss://… --slug … --enroll-token … --hub-authority …"></div>
+<p class="hint">提交后会自动重启 dsh，本机和远程访问会短暂中断。</p>
 <button type="submit">${view.kind === 'joined' ? '改用这个远程入口' : '设为远程入口'}</button></form>`,
   })
 }

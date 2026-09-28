@@ -164,6 +164,27 @@ line-height:1.4; white-space:nowrap`，SVG `display:block; flex:none`。这样�
 
 需要让预览路径/操作栏在内容滚动时留在顶部时，`position: sticky; top: 0` 必须写在实际滚动容器的后代上，并配不透明的 `var(--dsw-alias-bg-base)` 背景和足够的 `z-index`，否则正文会穿过表头。滚动容器在表头上方不要保留 padding：sticky 会停在 padding edge，正文仍可能从表头上方露出；把上方留白移到 sticky 表头自身的 `padding-top`。不要改成 `position: fixed`，那会脱离 Sidebar pane 的滚动坐标和宽度。实例是 `packages/plugins/files/src/client/styles.ts` 的 `.dsh-files-preview` / `.dsh-files-preview-head`；真实 dsh 页面滚动预览区 500px 后，表头 `getBoundingClientRect().top` 与滚动容器顶部一致。
 
+### 桌面标题栏占位与页面外留白
+
+先区分卡片外部留白与标题内部 padding。0.1.7-rc.2 原生设置采用 fixed 居中 overlay，面板高度
+`min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-top-clearance,24px))))`；
+依据是 `packages/client/ui-settings-general/src/client/SettingsRoot.module.css`，已按当前发布包复核，本地旧 checkout 可能没有 clearance 变量。
+独立 relay 管理文档仍需顶部对齐，不能照搬整套居中 modal；壳注入36px标题栏时也不能直接覆盖页面24px padding。
+项目实例用 `--dsh-station-page-top-gap`（窄屏12px）与标题栏占位 calc 相加，未定义变量的dsh回退0；
+不要一次读取 computed padding 后写死，否则响应式切换会丢失。保留border-box，防止height:100%链底部裁切。
+真实Chrome + relay页面/实际标题栏脚本验证：宽屏卡片top60、条底36，窄屏top48、条底36；
+普通浏览器仍为24/12px，深浅主题不变、无横向溢出。不代表所有原生弹窗都共享设置面板的高度公式。
+
+### 桌面标题栏的主题跟随
+
+主题偏好和解析后的配色不是同一状态：`system` 不应被保存成当时的light/dark。
+原生dsh使用根节点 `data-ds-theme-source` 与body的 `data-ds-dark-theme`；relay管理页使用根节点 `data-theme`。
+标题栏取body计算背景色时，须分别观察根节点/body自身的主题属性，并订阅 `matchMedia` 与 `visibilitychange`；
+不能只看根节点class/style，也不应观察整个子树，否则标题栏自身写样式会触发回环。
+Chrome后台页可能已匹配新的系统CSS，却延迟派发媒体事件；重新可见时需重算。隔离真dsh→relay页面验证了
+原生dark/light/system事件更新、标题栏明暗与草稿不变；背景页媒体事件延迟、激活后派发也已观察。
+实例：`packages/desktop/chromebar.go`。宿主主题持久化与只读投影契约见 `docs/dsh/plugins.md`，不要用DOM乐观变化认定设置已保存。
+
 ### Modal 弹窗内自绘头部按钮
 
 dsh Modal（`packages/client/ui-primitives/src/Modal.tsx`）没有自定义 header 插槽；插件传的

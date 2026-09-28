@@ -5,6 +5,7 @@ import { issueDeviceEnrollToken } from '../../store/enroll-token.js'
 import type { PageAppearance } from '../shared.js'
 import {
   emptyResponse,
+  ADMIN_CSP,
   htmlHeaders,
   redirectResponse,
   textField,
@@ -101,23 +102,23 @@ export function registerMachineRoutes(
     // 只作废它在入口的设备身份；文案必须如实说明。
     const online = registry.getBySlug(device.slug) !== undefined
     const heading = online
-      ? `停止 ${device.slug} 上的 dsh-station，并把它从 ${machine} 移除？`
-      : `把 ${device.slug} 从 ${machine} 移除？（当前离线）`
+      ? `停止 ${device.slug} 并移除？`
+      : `移除 ${device.slug}？`
     const intro = online
-      ? `停的是 ${device.slug} 上的 dsh-station 和它的设备身份，不是它上面的对话记录。在 ${machine} 上无法撤销。`
-      : `${device.slug} 现在离线，这个操作送达不了那台机器，只在这里作废它的设备身份；它上面运行的服务不会被停掉。`
+      ? `从 ${machine} 移除后无法撤销；对话记录保留。`
+      : `${device.slug} 当前离线：仅移除设备身份，不停止该机服务，对话记录保留。`
     const consequences = online
       ? [
-          `${device.slug} 上的 connector 会致命退出；用 dsh-station 启动器跑的话，它的 dsh 进程会被一起停掉。`,
-          `与 ${device.slug} 的隧道立即断开，正在用它的浏览器当场失效。`,
-          '它未使用的注册令牌一并作废，旧令牌再也挂不上来。',
-          '分配给它的浏览器端口会关闭。',
-          `要重新挂回来，得在「机器」页再签一个注册令牌，并由人到 ${device.slug} 跟前重新启动 dsh-station。`,
+          `停止 ${device.slug} 的连接及工作站托管的 dsh。`,
+          `${device.slug} 的远程访问及现有连接立即断开。`,
+          '设备凭据和未使用的注册令牌失效。',
+          '该机器的访问端口关闭。',
+          `恢复需新注册令牌，并在 ${device.slug} 上重新启动 DSH 工作站。`,
         ]
       : [
-          `${device.slug} 的设备记录被作废，未使用的注册令牌一并失效，分配给它的浏览器端口关闭。`,
-          `它下次连上来（或唤醒探测）会被拒绝，回到「没有远程入口」的状态；它上面运行的 dsh-station 不会被停掉。`,
-          `要重新挂回来，得在「机器」页再签一个注册令牌，并由人到 ${device.slug} 跟前重新粘一次。`,
+          `${device.slug} 的设备凭据和未使用的注册令牌失效，访问端口关闭。`,
+          '后续连接和上线探测将被拒绝。',
+          `恢复需新注册令牌，并在 ${device.slug} 的「远程入口」页重新连接。`,
         ]
     return new Response(confirmPage({
       title: online ? '停止并移除机器' : '移除机器',
@@ -128,13 +129,13 @@ export function registerMachineRoutes(
       action: ADMIN_REVOKE_PATH,
       csrf,
       machineId: device.machineId,
-      submitLabel: online ? `确认停止并移除 ${device.slug}` : `确认移除 ${device.slug}`,
+      submitLabel: online ? `停止 ${device.slug} 并移除` : `移除 ${device.slug}`,
       cancelPath: ADMIN_PATH_PREFIX,
-      cancelLabel: '取消，返回机器列表',
+      cancelLabel: '取消',
       appearance: appearanceOf(context, `${ADMIN_REVOKE_PATH}?machineId=${encodeURIComponent(device.machineId)}`),
     }), {
       status: 200,
-      headers: htmlHeaders([...session.setCookieHeaders, ...setCookieHeaders]),
+      headers: htmlHeaders([...session.setCookieHeaders, ...setCookieHeaders], ADMIN_CSP),
     })
   })
 
@@ -182,7 +183,7 @@ export function registerMachineRoutes(
         appearance,
         host,
         status: 400,
-        error: '对方的机器名必须是小写字母、数字和连字符组成的 DNS 标签，例如 pc2。',
+        error: '机器名须为小写字母、数字和连字符组成的 DNS 标签，如 pc2。',
       })
     }
     const deviceName = textField(body.name).trim()

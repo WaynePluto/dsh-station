@@ -12,24 +12,27 @@
  * 端口（relay 31809 / dsh 3180）与发行版默认值错开，可与已安装的发行版实例同时运行。
  *
  * relay 最先启动（tsx 源码即可运行，不依赖任何构建），插件构建与介质同步
- * 在其后进行：dev:desktop 的窗口在 relay 监听后即显示，等待期由 relay 的
+ * 在其后进行：显式 attach 调试的窗口在 relay 监听后即显示，等待期由 relay 的
  * 重试页覆盖。任何构建失败都会连 relay 一起停掉整个栈。
  */
 
 import { spawn } from 'node:child_process'
-import { createHash, createPrivateKey } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createPrivateKey } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { hostname } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
 import { createInterface } from 'node:readline'
 import { DatabaseSync } from 'node:sqlite'
 import process from 'node:process'
+import { THEME_FILE_ENV_NAME, THEME_FILE_NAME } from '../packages/protocol/src/theme-projection.ts'
 import { defaultMachineSlug } from '../packages/launcher/src/relay.ts'
 import { loadOrCreateJwtSecret, jwtSecretFilePath } from '../packages/launcher/src/jwt-secret.ts'
 import { preparePnpmShim, resolveBundledModulesDirectory, resolvePnpmVersion, withBundledPnpmPath } from '../packages/launcher/src/dsh.ts'
 import { ensureProfile, profileDirectory } from '../packages/launcher/src/profile.ts'
+import { resolveDshPluginOverlays } from '../packages/launcher/src/dsh-plugins.ts'
 import { synchronizePluginDistributions } from '../packages/launcher/src/plugin-lifecycle.ts'
 import { developmentProfileOptions } from './dev-profile.ts'
+import { ensurePluginBuild } from './dev-plugin-build.mjs'
 import { issueDeviceEnrollToken, openRelayStore } from '../packages/relay/src/store/index.ts'
 import {
   DEVICE_KEY_FILE,
@@ -43,7 +46,6 @@ import {
   ROOT,
   PNPM_CLI,
   connectorCliArguments,
-  dshPluginOverlays,
   lanAddress,
   relayCliArguments,
   relayEnvironment,
@@ -203,7 +205,7 @@ const pnpmShimDirectory = preparePnpmShim(join(DSH_STATION_HOME, 'runtime', 'pnp
 const runtimeEnvironment = withBundledPnpmPath(environment, PNPM_CLI, pnpmShimDirectory)
 const lanIp = lanAddress()
 
-// relay 先于插件构建与 dsh 启动：桌面壳（dev:desktop）只在 relay 端口监听后
+// relay 先于插件构建与 dsh 启动：显式 attach 调试的桌面壳在 relay 端口监听后
 // 放行初始导航并显示窗口，dsh/插件就绪前的等待由 relay 自己的重试页承担。
 // relay 只依赖上面的 jwt/数据库参数，先起没有顺序风险；connector 仍等 dsh 的 token。
 start('relay', process.execPath, [
@@ -217,59 +219,6 @@ start('relay', process.execPath, [
   '--data', RELAY_DATABASE,
   '--home', DSH_STATION_HOME,
 ], environment)
-
-/** 源码指纹缓存；node_modules 随 install 重建，不进版本库。 */
-const PLUGIN_BUILD_STAMP_FILE = join(ROOT, 'node_modules', '.cache', 'dsh-station', 'dev-plugin-build.json')
-
-/** 把目录树的相对路径与文件字节一并喂进哈希；目录按名称排序保证跨平台稳定。 */
-function hashTree(hash, directory, prefix = '') {
-  for (const entry of readdirSync(directory, { withFileTypes: true })
-    .toSorted((a, b) => (a.name < b.name ? -1 : 1))) {
-    const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
-    hash.update(`${relative}\0`)
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) hashTree(hash, path, relative)
-    else if (entry.isFile() || entry.isSymbolicLink()) hash.update(readFileSync(path))
-  }
-}
-
-/** 一个包的构建输入指纹：src 树 + 清单 + 构建配置 + patch；不含 dist（它是输出）。 */
-function packageBuildStamp(directory) {
-  const hash = createHash('sha256')
-  for (const part of ['package.json', 'tsdown.config.ts', 'cordis.patch.yml']) {
-    const path = join(directory, part)
-    if (existsSync(path)) {
-      hash.update(`${part}\0`)
-      hash.update(readFileSync(path))
-    }
-  }
-  if (existsSync(join(directory, 'src'))) hashTree(hash, join(directory, 'src'), 'src')
-  return hash.digest('hex')
-}
-
-function fileStamp(path) {
-  return createHash('sha256').update(readFileSync(path)).digest('hex')
-}
-
-/** 全部构建输入的指纹：每个插件包与共享 plugin-ui，外加分发脚本和 lockfile。 */
-function computePluginBuildStamp() {
-  const pluginsRoot = join(ROOT, 'packages', 'plugins')
-  const directories = readdirSync(pluginsRoot, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => join(pluginsRoot, entry.name))
-  directories.push(join(ROOT, 'packages', 'plugin-ui'))
-  const packages = Object.fromEntries(directories
-    .toSorted((a, b) => (a < b ? -1 : 1))
-    .map(directory => [basename(directory), packageBuildStamp(directory)]))
-  return {
-    schemaVersion: 1,
-    packages,
-    inputs: {
-      'scripts/plugin-distributions.mjs': fileStamp(join(ROOT, 'scripts', 'plugin-distributions.mjs')),
-      'pnpm-lock.yaml': fileStamp(join(ROOT, 'pnpm-lock.yaml')),
-    },
-  }
-}
 
 /** 运行根 package.json 的一个脚本；用仓库锁定的 pnpm CLI，输出原样流入本进程。 */
 async function runRootScript(name) {
@@ -291,23 +240,11 @@ async function runRootScript(name) {
 // 加介质复制约 5 秒，是开发冷启动的大头；指纹覆盖 src 树、构建配置、
 // 包清单、分发脚本与 lockfile（锁住构建工具版本）。开发运行时的准备
 // 在入口脚本（dev-stack.mjs）里，先于本文件的导入发生。
-const buildStamp = computePluginBuildStamp()
-const mediaIntact = existsSync(join(ROOT, '.dev', 'plugins', 'catalog.json'))
-let previousBuildStamp
 try {
-  previousBuildStamp = JSON.parse(readFileSync(PLUGIN_BUILD_STAMP_FILE, 'utf8'))
-} catch {
-  previousBuildStamp = undefined
-}
-if (previousBuildStamp !== undefined && mediaIntact
-  && JSON.stringify(previousBuildStamp) === JSON.stringify(buildStamp)) {
-  console.log('[dsh-station] 插件源码未变化，跳过构建与介质刷新（.dev/plugins 沿用）。')
-} else {
-  await runRootScript('plugins:build')
-  await runRootScript('plugins:prepare')
-  mkdirSync(dirname(PLUGIN_BUILD_STAMP_FILE), { recursive: true })
-  writeFileSync(PLUGIN_BUILD_STAMP_FILE, `${JSON.stringify(buildStamp, undefined, 2)}
-`)
+  await ensurePluginBuild({ root: ROOT, runRootScript })
+} catch (error) {
+  for (const running of children.values()) killTree(running)
+  fail(error instanceof Error ? error.message : String(error))
 }
 
 // 不预加载 proxy：出站 proxy 在 dsh 自己的
@@ -358,12 +295,12 @@ start('dsh', process.execPath, [
   // 壳级常驻 overlay（connection 注入，D20）：功能插件已作为第三方 Bundle
   // 安装到上面的 profile。--patch 是 launcher 标志，因此必须
   // 与 --profile 放在一起，并置于 web app 自行解析的所有参数之前。
-  ...dshPluginOverlays().flatMap(overlay => ['--patch', overlay]),
+  ...resolveDshPluginOverlays().flatMap(overlay => ['--patch', overlay]),
   '--no-open',
   '--host', '127.0.0.1',
   '--port', String(DSH_PORT),
   '--trusted-host', ...trustedHosts,
-], { ...runtimeEnvironment, DSH_HOME: dshHome }, (line) => {
+], { ...runtimeEnvironment, DSH_HOME: dshHome, [THEME_FILE_ENV_NAME]: resolvePath(DSH_STATION_HOME, THEME_FILE_NAME) }, (line) => {
   if (dshTokenSeen) return
   const match = /dsh web:\s*(\S+)/u.exec(line)
   if (match === null) return

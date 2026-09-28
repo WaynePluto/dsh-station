@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import pino from 'pino'
 import { describe, expect, it } from 'vitest'
 import {
@@ -81,7 +84,9 @@ describe('relay authentication configuration', () => {
       store,
       jwtSecret: new Uint8Array(32).fill(0x44),
     })
+    const home = mkdtempSync(join(tmpdir(), 'relay-config-'))
     const relay = createRelayServer({
+      home,
       host: '127.0.0.1',
       port: 0,
       directSlug: 'pc1',
@@ -94,6 +99,7 @@ describe('relay authentication configuration', () => {
     } finally {
       await relay.close()
       store.close()
+      rmSync(home, { recursive: true, force: true })
     }
   })
 

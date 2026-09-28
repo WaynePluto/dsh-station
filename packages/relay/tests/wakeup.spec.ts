@@ -143,7 +143,9 @@ describe('wakeup state on the machines page', () => {
     expect(body).toContain('<span class="badge off">离线</span>')
     // 两台都不在线：按钮对两种断开状态都提供，徽标说明区别。
     expect(body).toContain('请求 silent 上线')
-    expect(body).toContain('已断开 · 可唤醒」表示那台机器的 dsh-station 还在运行')
+    expect(body).toContain('重连通常需约一分钟')
+    expect(body).toContain('请求保留 24 小时')
+    expect(body).toContain('无法唤醒已关机的机器')
   })
 
   it('offers no wakeup button for online machines and labels removal differently', async () => {
@@ -171,8 +173,8 @@ describe('wakeup state on the machines page', () => {
     })
     expect(confirm.status, confirm.body).toBe(200)
     expect(confirm.body).toContain('当前离线')
-    expect(confirm.body).toContain('只在这里作废它的设备身份')
-    expect(confirm.body).toContain('它上面运行的服务不会被停掉')
-    expect(confirm.body).toContain(`确认移除 ${MACHINE_SLUG}`)
+    expect(confirm.body).toContain('仅移除设备身份')
+    expect(confirm.body).toContain('不停止该机服务')
+    expect(confirm.body).toContain(`type="submit">移除 ${MACHINE_SLUG}</button>`)
   })
 })

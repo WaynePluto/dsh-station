@@ -2,8 +2,11 @@
 
 ## 1. 全景
 
-每台机器运行自己的 dsh、relay 和 connector。任意机器都可以提供远程入口；
+完整远程模式下，每台机器运行自己的 dsh、relay 和 connector。任意机器都可以提供远程入口；
 一台机器最多配置一个远程入口，开放关系是单向的。
+桌面发行版与 `dev:desktop` 默认只启动 dsh；用户启用远程或打开管理页时才补起 relay/connector（D25）。
+桌面启动先显示壳的临时 loopback 加载页，dsh 就绪后再顶层认证交接；不等待后台才返回页面。
+管理动作同样先显示加载页再异步启用远程，启用失败不停止本机 dsh。CLI、`pnpm dev` 与 Linux 服务版仍完整启动。
 
 ```mermaid
 flowchart LR
@@ -25,7 +28,8 @@ flowchart LR
 | `packages/protocol` | 控制帧、schema、协议版本、超时与错误码 |
 | `packages/connector` | 拨出隧道、设备签名认证、回拨数据流、重连 |
 | `packages/relay` | 浏览器认证、设备认证、管理页、机器路由与字节转发 |
-| `packages/launcher` | 配置、profile、产物检查、启动和监督三个子进程 |
+| `packages/launcher` | 配置、profile、产物检查、子进程监督；桌面远程按需启用与启用失败隔离 |
+| `packages/desktop` | 开发/发行共用后台托管、原生窗口与托盘、即时管理加载页；只提供受控无参导航，不代理业务 |
 | `packages/plugins` | 通过 dsh 插件扩展功能；见 [插件索引](plugins.md) |
 | `packages/plugins`（装载） | 20 个功能组件由 4 个组合包与 6 个独立第三方 Bundle 分发；首次默认安装、仍安装项配套升级、卸载后从随附 `plugins/` 重装；connection 注入和模型 HMR 启动屏障是壳级常驻 overlay（D20） |
 
@@ -55,9 +59,16 @@ launcher 与开发栈都在启动前检查宿主与浏览器产物，缺失即�
 
 默认分发与装载顺序以根目录 [plugin-catalog.json](../plugin-catalog.json) 为准：
 代理在模型增强前生效（跟随环境、使用插件代理、强制直连三态），固定 YOLO 是最后一个第三方 Bundle；唯一随 `--patch` 传入的是
-remote-privileged（壳级、不可停），负责 connection 注入和模型 Bundle 在线启停所需的稳定启动屏障。
-开发入口为 [dev-stack.mjs](../scripts/dev-stack.mjs)，由 [local-config.mjs](../scripts/local-config.mjs)
-提供 overlay 路径与默认 Bundle 清单（与 launcher 保持一致）。
+remote-privileged（壳级、不可停），负责 connection 注入、模型 Bundle 在线启停所需的稳定启动屏障，以及原生主题只读投影。
+管理页主题沿用原生 `ui-theme` 配置为单一来源（D26）：壳级插件订阅已提交重载，原子写工作站home的
+`dsh-theme.json`；relay有界读取并通过目录watch订阅，认证后的管理页用固定哈希脚本消费只读NDJSON流。
+这是工作站自有安全投影，不是relay读取原生profile或解释dsh业务协议；不建立反向写入通道。
+登录与首次设置保留独立Cookie外观。初始无有效投影时system，暂时失联保留最后值。
+
+完整开发栈入口为 [dev-stack.mjs](../scripts/dev-stack.mjs)；开发桌面入口为
+[dev-desktop.mjs](../scripts/dev-desktop.mjs)，由受管 wrapper 准备后运行同一 launcher。
+两者共享 [dev-plugin-build.mjs](../scripts/dev-plugin-build.mjs) 缓存与
+[local-config.mjs](../scripts/local-config.mjs) 的隔离数据/端口，不能同时占用同一开发实例。
 
 第三方 Bundle 使用官方命令：
 

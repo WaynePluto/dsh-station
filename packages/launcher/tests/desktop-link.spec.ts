@@ -74,6 +74,22 @@ describe('desktop link', () => {
     expect(parsed.remoteEnabled).toBe(false)
   })
 
+  it.each([
+    { phase: 'ready', remoteState: 'idle', remoteEnabled: false },
+    { phase: 'remote', remoteState: 'starting', remoteEnabled: false },
+    { phase: 'ready', remoteState: 'ready', remoteEnabled: true },
+    { phase: 'remote', remoteState: 'stopping', remoteEnabled: false },
+    { phase: 'restarting', remoteState: 'stopping', remoteEnabled: false },
+    { phase: 'ready', remoteState: 'failed', remoteEnabled: false, remoteError: '启用远程服务失败：HTTP 502\n请退出重开' },
+  ] as const)('serializes independent remote state $remoteState without changing the protocol', (state) => {
+    const io = memoryIo()
+    const link = createDesktopLink(['--desktop'], io)
+    link.emit({ ...statusMessage, ...state })
+    const line = io.written[0] ?? ''
+    expect(line.split('\n')).toHaveLength(2)
+    expect(JSON.parse(line.slice(DESKTOP_LINE_PREFIX.length))).toMatchObject({ protocol: 1, type: 'status', ...state })
+  })
+
   it('dispatches stop commands and ignores malformed or unknown lines', () => {
     const io = memoryIo()
     const link = createDesktopLink(['--desktop'], io)
@@ -82,18 +98,24 @@ describe('desktop link', () => {
     io.feed('{"type":"stop"}')
     io.feed('not json')
     io.feed('{"type":"restart"}')
+    io.feed('{"type":"unknown-remote"}')
     io.feed('   ')
     io.feed('{"type":"stop"}')
     expect(commands).toEqual(['stop', 'stop'])
   })
 
-  it('dispatches start-remote commands (D25)', () => {
+  it('dispatches remote lifecycle commands (D25) without closing the channel', () => {
     const io = memoryIo()
     const link = createDesktopLink(['--desktop'], io)
     const commands: string[] = []
     link.listen(command => commands.push(command.type))
     io.feed('{"type":"start-remote"}')
+    io.feed('{"type":"stop-remote"}')
+    io.feed('{"type":"restart-remote"}')
     io.feed('{"type":"stop"}')
-    expect(commands).toEqual(['start-remote', 'stop'])
+    expect(commands).toEqual(['start-remote', 'stop-remote', 'restart-remote', 'stop'])
+    link.close()
+    io.feed('{"type":"start-remote"}')
+    expect(commands).toEqual(['start-remote', 'stop-remote', 'restart-remote', 'stop'])
   })
 })

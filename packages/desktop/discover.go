@@ -13,6 +13,8 @@ import (
 type desktopPayload struct {
 	// packageDir 是部署的 launcher 包根（含 dist/index.js 与 node_modules）。
 	packageDir string
+	// entry 仅受管开发模式使用固定 wrapper；发行版仍取 package/dist/index.js。
+	entry string
 	// pluginMediaDir 是 package 旁的 plugins/ 介质目录（launcher 自行解析，这里只做存在性提示）。
 	pluginMediaDir string
 	// nodePath 为空表示使用系统 PATH 里的 node。
@@ -71,6 +73,26 @@ func discoverPayload(appDirOverride string) (desktopPayload, error) {
 		payload.bundledNode = true
 	}
 	return payload, nil
+}
+
+// 开发模式复用同一后台管理器；只有准备入口和数据路径与发行版不同。
+func discoverDevelopmentPayload(root string) (desktopPayload, error) {
+	entry := filepath.Join(root, "scripts", "dev-desktop-backend.mjs")
+	if !isFile(entry) || !isFile(filepath.Join(root, "packages", "launcher", "package.json")) {
+		return desktopPayload{}, fmt.Errorf("--dev-root 下缺少开发后端或 launcher：%s", root)
+	}
+	node, err := lookPathNode()
+	if err != nil {
+		return desktopPayload{}, fmt.Errorf("开发模式需要系统 Node ≥ 22.19.0：%w", err)
+	}
+	return desktopPayload{packageDir: root, entry: entry, nodePath: node}, nil
+}
+
+func payloadFor(config runOptions) (desktopPayload, error) {
+	if config.devRoot != "" {
+		return discoverDevelopmentPayload(config.devRoot)
+	}
+	return discoverPayload(config.appDir)
 }
 
 func findBundledNode(base string) string {

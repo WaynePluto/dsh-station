@@ -21,8 +21,8 @@ export const ADMIN_MEMBERSHIP_RECONNECT_PATH = `${ADMIN_PATH_PREFIX}/membership/
 /**
  * 控制台的三个页面，按标签栏显示的顺序排列。
  *
- * 使用标签栏而非 dsh 的侧栏：这些页面完全没有脚本（`default-src 'none'`），
- * 而且不同于 dsh 的会话列表，它们只是偶尔访问的设置页，永久停靠的栏只会
+ * 使用标签栏而非 dsh 的侧栏：导航与表单沿用无脚本HTML，仅主题使用固定只读脚本。
+ * 不同于 dsh 的会话列表，它们只是偶尔访问的设置页，永久停靠的栏只会
  * 占用手机宽度。
  *
  * 没有活动页面：审计轨迹是写给读取 relay 主机上的 `audit_log` 和 pino 流的人看的，
@@ -47,15 +47,6 @@ export function machineLabel(slug: string | undefined): string {
   return slug ?? '这台机器'
 }
 
-/**
- * 对“打开机器”实际含义的唯一说明，在需要处原样复用。
- * @param machine 这台机器的名称。
- * @returns 一句 markup。
- */
-export function whereDshRuns(machine: string): string {
-  return `每台机器都跑着自己的 dsh，AI 读写文件、执行命令都发生在<strong>被打开的那台机器上</strong>；${escapeHtml(machine)} 只负责把请求转过去，自己什么都不执行。`
-}
-
 export const CONSOLE_STYLE = `
 main{width:min(100%,640px)}
 /* 顶部对齐，不同于居中的登录页外壳。
@@ -74,12 +65,21 @@ form{margin:16px 0 0}
 .machine h2{margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;line-height:22px;font-weight:500;color:var(--ink)}
 .badge{display:inline-flex;align-items:center;gap:6px;padding:1px 8px;border:1px solid var(--line-strong);border-radius:999px;font-size:11px;line-height:16px;font-weight:400;color:var(--ink-2)}
 .badge:before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink-3)}
+/* 本机标记沿用蓝鲸固定品牌色，不表示在线状态。 */
+.badge.local:before{background:#4D6BFE}
 .badge.on:before{background:var(--success)}
 .badge.idle:before{background:var(--warn)}
 .badge.gone:before{background:var(--danger)}
 .off{color:var(--ink-3)}
 .gone{color:var(--danger)}
 .meta{margin:0;font-family:var(--mono);font-size:12px;line-height:20px;color:var(--ink-3);overflow-wrap:anywhere}
+/* 低频信息按需展开；使用原生details，不增加脚本或隐藏安全确认。 */
+.details{min-width:0;font-size:12px;line-height:20px;color:var(--ink-3)}
+.details summary{width:fit-content;max-width:100%;border-radius:4px;color:var(--ink-2);cursor:pointer}
+.details summary:hover{background:var(--hover);color:var(--ink)}
+.details summary:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.details[open]>summary{margin-bottom:8px}
+h1,.eyebrow,h2.section,.machine h2,.hub h3,.card h3{overflow-wrap:anywhere}
 .actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .actions form{margin:0}
 .open{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--line);border-radius:18px;color:var(--ink);font-weight:500;text-decoration:none}
@@ -150,27 +150,27 @@ export function consolePage(options: {
   username: string | null
   appearance: PageAppearance
 }): string {
-  const who = options.username === null ? '本机免登录会话' : escapeHtml(options.username)
+  const who = options.username === null ? '本机免登录' : `已登录：${escapeHtml(options.username)}`
   const signOut = options.username === null
     ? ''
     : `<a class="open" href="${LOGOUT_PATH}?returnTo=${encodeURIComponent(options.current)}">退出登录</a>`
   return renderPage({
     title: `${options.title} · ${options.machine} · DSH 工作站`,
     extraStyle: CONSOLE_STYLE,
+    nativeTheme: true,
     appearance: options.appearance,
     body: `${tabStrip(options.current)}
-<p class="eyebrow">你正在管理 ${escapeHtml(options.machine)}</p><h1>${options.heading}</h1>
+<p class="eyebrow">当前机器：${escapeHtml(options.machine)}</p><h1>${options.heading}</h1>
 <p class="intro">${options.intro}</p>
 ${options.body}
-<div class="signout"><p class="foot">DSH 工作站 / signed in as ${who}</p>${signOut}</div>`,
+<div class="signout"><p class="foot">${who}</p>${signOut}</div>`,
   })
 }
 
 /**
  * 对无法在此撤销的操作显示整页确认。
  *
- * relay 页面完全没有脚本（`default-src 'none'`），因此没有可用的 `confirm()` 对话框，
- * 防护本身就是一个页面。渲染它的 GET 不会改变任何内容，因此可以安全地通过链接、预取或误输入的 URL 到达。
+ * 不依赖客户端 `confirm()` 对话框，防护本身就是一个页面。渲染它的 GET 不会改变任何内容，因此可以安全地通过链接、预取或误输入的 URL 到达。
  * @param options 页面文案、逐行列出的后果、实际执行操作的 POST 目标、请求携带的 CSRF token、
  * 操作所针对的可选机器、取消后返回的路径以及要渲染的外观。
  * @returns 完整的 HTML 文档。
@@ -197,8 +197,9 @@ export function confirmPage(options: {
   return renderPage({
     title: `${options.title} · ${options.machine} · DSH 工作站`,
     extraStyle: CONSOLE_STYLE,
+    nativeTheme: true,
     appearance: options.appearance,
-    body: `<p class="eyebrow">你正在管理 ${escapeHtml(options.machine)}</p><h1>${escapeHtml(options.heading)}</h1>
+    body: `<p class="eyebrow">当前机器：${escapeHtml(options.machine)}</p><h1>${escapeHtml(options.heading)}</h1>
 <p class="intro">${escapeHtml(options.intro)}</p>
 <ul class="consequences">${items}</ul>
 <form method="post" action="${options.action}">

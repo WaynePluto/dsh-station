@@ -180,7 +180,7 @@ export function registerAccountRoutes(
       session,
       appearance,
       status: 200,
-      notice: `密码已修改，同时注销了 ${String(result.revokedSessions)} 个登录会话。所有设备都要用新密码重新登录。`,
+      notice: `密码已修改，${String(result.revokedSessions)} 个会话已注销。请使用新密码重新登录。`,
     })
   })
 
@@ -210,7 +210,7 @@ export function registerAccountRoutes(
         qrSvg: await totpQrSvg(reset.enrollment.uri),
         confirmable: session.userId === null,
       },
-      notice: `验证器已重置，同时注销了 ${String(reset.revokedSessions)} 个登录会话。旧的动态码立刻失效。`,
+      notice: `验证器已重置，旧动态码已失效，${String(reset.revokedSessions)} 个会话已注销。`,
     })
   })
 
@@ -233,8 +233,8 @@ export function registerAccountRoutes(
       appearance,
       status: confirmed ? 200 : 400,
       ...confirmed
-        ? { notice: '新的验证器已绑定，下次登录请用它生成的动态码。' }
-        : { error: '动态码不正确或当前没有待确认的验证器，请重新发起一次重置。' },
+        ? { notice: '验证器已绑定。' }
+        : { error: '动态码无效或绑定已失效，请重置验证器后重试。' },
     })
   })
 }

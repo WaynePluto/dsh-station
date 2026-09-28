@@ -4,6 +4,8 @@ import pino, { type Logger } from 'pino'
 import { createAuthRequestListener } from './admin/auth-app.js'
 import { createAdminConsoleRequestListener } from './admin/console-app.js'
 import { createSetupRequestListener } from './admin/setup-app.js'
+import { NativeTheme } from './admin/native-theme.js'
+import { ThemeEvents } from './admin/theme-events.js'
 import { BrowserAuthenticator } from './auth/browser.js'
 import { BrowserCookiePolicy } from './auth/cookies.js'
 import { DeviceAuthenticator } from './auth/device.js'
@@ -105,12 +107,16 @@ export function createRelayServer(
     return initialized
   }
 
+  const nativeTheme = new NativeTheme(config.home, logger)
+  const themeEvents = new ThemeEvents(nativeTheme, options.store, config)
   const adminConsole = createAdminConsoleRequestListener({
     cookies,
     store: options.store,
     registry: tunnel.registry,
     config,
     logger,
+    nativeTheme,
+    themeEvents,
     memberPort: machineId => memberPorts?.portOf(machineId),
     onDeviceRevoked: (machineId) => {
       void memberPorts?.release(machineId).catch((error: unknown) => {
@@ -152,6 +158,7 @@ export function createRelayServer(
     browserAuth,
     memberPorts: members,
     listen: async () => {
+      nativeTheme.start()
       const address = await new Promise<AddressInfo>((resolve, reject) => {
         const onError = (error: Error): void => reject(error)
         httpServer.once('error', onError)
@@ -208,6 +215,8 @@ export function createRelayServer(
       return address
     },
     close: async () => {
+      themeEvents.close()
+      nativeTheme.close()
       browserAuth?.close()
       tunnel.close()
       await members.closeAll()

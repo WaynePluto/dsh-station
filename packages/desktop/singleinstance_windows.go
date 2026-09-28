@@ -18,7 +18,6 @@ var (
 	activationIsIconic      = activationUser32.NewProc("IsIconic")
 )
 
-const activationWindowTitle = "DSH 工作站"
 const singleInstanceMutexName = `Local\dsh-station-desktop-single-instance`
 
 const (
@@ -28,8 +27,12 @@ const (
 
 // acquireSingleInstance 抢占命名互斥体。重复启动时不启动第二套壳：
 // 唤起已有窗口（还原 + 置前）后返回 false，调用方直接退出。
-func acquireSingleInstance() (bool, func()) {
-	mutexName, err := syscall.UTF16PtrFromString(singleInstanceMutexName)
+func acquireSingleInstance(development bool, windowTitle string) (bool, func()) {
+	name := singleInstanceMutexName
+	if development {
+		name += "-dev"
+	}
+	mutexName, err := syscall.UTF16PtrFromString(name)
 	if err != nil {
 		// 名字是常量，永远到不了这里；防御性处理为「允许运行」。
 		return true, func() {}
@@ -42,15 +45,15 @@ func acquireSingleInstance() (bool, func()) {
 	// 已有实例时 GetLastError 返回 ERROR_ALREADY_EXISTS（183）。
 	if createErr == syscall.ERROR_ALREADY_EXISTS {
 		_ = syscall.CloseHandle(syscall.Handle(mutex))
-		activateExistingWindow()
+		activateExistingWindow(windowTitle)
 		return false, func() {}
 	}
 	return true, func() { _ = syscall.CloseHandle(syscall.Handle(mutex)) }
 }
 
 // activateExistingWindow 按标题找到已有主窗口并唤起。
-func activateExistingWindow() {
-	title, err := syscall.UTF16PtrFromString(activationWindowTitle)
+func activateExistingWindow(windowTitle string) {
+	title, err := syscall.UTF16PtrFromString(windowTitle)
 	if err != nil {
 		return
 	}

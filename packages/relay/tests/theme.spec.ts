@@ -54,22 +54,17 @@ afterEach(async () => {
 })
 
 describe('the appearance switch', () => {
-  it('renders every page as system until told otherwise, with all three choices offered', async () => {
+  it('defaults management to system without an independent theme switch', async () => {
     const fixture = await startFixture()
 
     const machines = await open(fixture, ADMIN_PATH_PREFIX, fixture.sessionCookie)
     expect(machines.status).toBe(200)
     expect(machines.body).toContain('<html lang="zh-CN" data-theme="system">')
-    for (const value of ['light', 'dark', 'system']) {
-      expect(machines.body).toContain(`${THEME_PATH}?value=${value}&amp;returnTo=`)
-    }
-    // 恰好一个选项显示为当前选项，默认是 dsh 的默认选项。
-    expect([...machines.body.matchAll(/<a href="\/_theme[^"]*" aria-current="true">/g)])
-      .toHaveLength(1)
-    expect(machines.body).toContain('aria-current="true">跟随系统</a>')
+    expect(machines.body).not.toContain(`${THEME_PATH}?value=`)
+    expect(machines.body).not.toContain('aria-label="外观"')
   })
 
-  it('remembers a choice in a cookie and redraws the page it came from', async () => {
+  it('preserves the public cookie switch but does not let it override management', async () => {
     const fixture = await startFixture()
 
     const switched = await httpRequest({
@@ -86,8 +81,8 @@ describe('the appearance switch', () => {
       `${fixture.sessionCookie}; ${themeCookie(switched)}`,
     )
     expect(remembered.status).toBe(200)
-    expect(remembered.body).toContain('<html lang="zh-CN" data-theme="dark">')
-    expect(remembered.body).toContain('aria-current="true">深色</a>')
+    expect(remembered.body).toContain('<html lang="zh-CN" data-theme="system">')
+    expect(remembered.body).not.toContain(`${THEME_PATH}?value=`)
   })
 
   it('works on the login page, which nobody has a session for yet', async () => {

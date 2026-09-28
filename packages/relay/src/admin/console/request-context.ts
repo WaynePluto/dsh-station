@@ -22,6 +22,7 @@ import type { MachineRegistry } from '../../tunnel/registry.js'
 import { isLoopbackBrowserRequest } from '../../auth/loopback.js'
 import { type MembershipView } from './hub.js'
 import {
+  ADMIN_CSP,
   csrfToken,
   emptyResponse,
   equalCsrf,
@@ -30,7 +31,7 @@ import {
   textField,
   type PageAppearance,
 } from '../shared.js'
-import { readThemePreference } from '../theme.js'
+import type { NativeTheme } from '../native-theme.js'
 
 /**
  * `/_admin` 请求背后的浏览器身份。D15 loopback 豁免时 `userId` 为 null，
@@ -39,6 +40,8 @@ import { readThemePreference } from '../theme.js'
 export interface AdminConsoleSession {
   readonly userId: string | null
   readonly username: string | null
+  /** 长连接逐帧复核会话；仅通过浏览器认证后提供。 */
+  readonly sessionId?: string
   /** 自动刷新产生的 cookies；控制台不得丢弃它们。 */
   readonly setCookieHeaders: readonly string[]
 }
@@ -129,6 +132,7 @@ export function createAdminConsoleRequestContext(options: {
   membershipPath: string
   machine: string
   sessionOf: (incoming: IncomingMessage) => AdminConsoleSession
+  nativeTheme: NativeTheme
 }): AdminConsoleRequestContext {
   const {
     cookies,
@@ -143,12 +147,9 @@ export function createAdminConsoleRequestContext(options: {
   } = options
 
   const appearanceOf = (
-    context: AdminConsoleHeaderContext,
-    returnTo: string,
-  ): PageAppearance => ({
-    theme: readThemePreference(cookies.forRequest(context.env.incoming), context.req.header('cookie')),
-    returnTo,
-  })
+    _context: AdminConsoleHeaderContext,
+    _returnTo: string,
+  ): PageAppearance => ({ theme: options.nativeTheme.preference })
 
   const page = (input: {
     session: AdminConsoleSession
@@ -159,7 +160,7 @@ export function createAdminConsoleRequestContext(options: {
     const cookiePolicy = input.session.userId === null ? cookies.forLoopback() : cookies
     return new Response(input.render(csrf), {
       status: input.status,
-      headers: htmlHeaders([...input.session.setCookieHeaders, cookiePolicy.csrfHeader(csrf)]),
+      headers: htmlHeaders([...input.session.setCookieHeaders, cookiePolicy.csrfHeader(csrf)], ADMIN_CSP),
     })
   }
 

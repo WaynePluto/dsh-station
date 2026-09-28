@@ -20,3 +20,5 @@
 - insert:
     - id: dsh-station-model-bootstrap-fallback
       name: './model-bootstrap.mjs'
+    - id: dsh-station-theme-projection
+      name: './theme-projection.mjs'

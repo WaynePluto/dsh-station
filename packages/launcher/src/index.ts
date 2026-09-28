@@ -4,8 +4,7 @@
  * 职责（见 docs/06-packaging.md §3）：
  *   - 检测 Node 版本
  *   - 确保自有 dsh profile 存在（D14），spawn 内嵌的 dsh（D13）
- *   - spawn 本机 relay：每台机器都既能当入口又能被打开（D16），本机控制台也是
- *     给本机设置远程入口的唯一地方，所以它不可关闭
+ *   - CLI 全量启动 relay/connector；桌面壳默认仅本机 dsh，远程按需启用（D25）
  */
 
 /**
@@ -18,9 +17,9 @@
  */
 
 import process from 'node:process'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { Command } from 'commander'
-import type { DshRestartStatus, MembershipHub } from '@dsh-station/protocol'
+import { THEME_FILE_ENV_NAME, THEME_FILE_NAME, type DshRestartStatus, type MembershipHub } from '@dsh-station/protocol'
 import { renderBanner } from './banner.js'
 import { createDesktopLink, type DesktopLink, type DesktopPhase, type DesktopUrls } from './desktop-link.js'
 import { acquireInstanceLock, type InstanceLock } from './instance-lock.js'
@@ -60,6 +59,8 @@ import { DSH_STATION_PROFILE_BUNDLES, ensureProfile, profileDirectory, resolveDs
 import { resolvePluginMediaDirectory, synchronizePluginDistributions } from './plugin-lifecycle.js'
 import { relayArguments, resolveRelayEntry } from './relay.js'
 import { relayAdminInitialized } from './relay-admin.js'
+import { createRemoteLifecycle, type RemoteLifecycle } from './remote-lifecycle.js'
+import { waitForRemote } from './remote-ready.js'
 import { createSupervisor, type ChildExit } from './supervisor.js'
 import { lanAddress, trustedHostsFor } from './trusted-hosts.js'
 import { LAUNCHER_VERSION } from './version.js'
@@ -124,7 +125,15 @@ export async function run(argv: readonly string[]): Promise<number> {
   const localMode = desktop.enabled
   /** 本机模式下已捕获的 dsh token：start-remote 时给 connector，emit 时给壳代发。 */
   let dshTokenValue: string | undefined
+  let shuttingDown = false
+  let desktopFailed = false
+  let desktopPhase: DesktopPhase = 'config'
+  let remote: RemoteLifecycle | undefined
   const emit = (phase: DesktopPhase, detail?: string): void => {
+    // 退出后不让异步完成覆盖 stopping；失败原因保留到进程退出。
+    if (desktopFailed || (shuttingDown && phase !== 'stopping')) return
+    if (phase === 'failed') desktopFailed = true
+    desktopPhase = phase
     desktop.emit({
       type: 'status',
       protocol: 1,
@@ -134,7 +143,9 @@ export async function run(argv: readonly string[]): Promise<number> {
       ...desktopUrls === undefined ? {} : { urls: desktopUrls },
       ...desktopAdminReady === undefined ? {} : { adminReady: desktopAdminReady },
       ...dshTokenValue === undefined ? {} : { dshToken: dshTokenValue },
-      remoteEnabled: remoteStarted,
+      remoteEnabled: remote?.state === 'ready',
+      remoteState: remote?.state ?? 'idle',
+      ...remote?.error === undefined ? {} : { remoteError: remote.error },
     })
   }
 
@@ -145,8 +156,6 @@ export async function run(argv: readonly string[]): Promise<number> {
   say(configPath === undefined ? '没有找到配置文件，使用默认配置。' : `已读取配置 ${configPath}`)
 
   const lock: InstanceLock = acquireInstanceLock(config.home)
-  /** 本机模式下远程服务是否已按需启用（D25）；emit 的每次 status 都携带。 */
-  let remoteStarted = false
   desktopUrls = {
     // 本机模式：local 先指 dsh 直连地址（壳用它代发 token 交换）；启用远程后切回 relay。
     local: localMode
@@ -212,7 +221,6 @@ export async function run(argv: readonly string[]): Promise<number> {
     return { ...process.env, [JWT_SECRET_ENV_NAME]: jwtSecret }
   }
 
-  let shuttingDown = false
   // membership 监视器创建后赋值；shutdown 先释放它，退出路径上不再触发 dsh 重启。
   let stopTrustWatcher: (() => void) | undefined
   // 由下面的 executor 同步赋值；之所以可选只是因为
@@ -221,6 +229,7 @@ export async function run(argv: readonly string[]): Promise<number> {
   const finished = new Promise<number>((resolvePromise) => { settle = resolvePromise })
   const supervisor = createSupervisor({
     onUnexpectedExit: (exit) => {
+      if (shuttingDown || remote?.handleExit(exit)) return
       reportChildExit(exit)
       emit('failed', `${exit.name} 意外退出`)
       void shutdown(1)
@@ -229,6 +238,7 @@ export async function run(argv: readonly string[]): Promise<number> {
   const shutdown = async (code: number): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
+    const remoteCleanup = remote?.cancel()
     emit('stopping')
     // stdin 是活跃 handle：不先关掉，事件循环会在所有子进程回收后仍挂住
     // （进程迟迟不退，桌面壳只能等宽限期后强杀）。
@@ -236,6 +246,7 @@ export async function run(argv: readonly string[]): Promise<number> {
     stopTrustWatcher?.()
     // 按反向启动顺序停止：connector 在它拨号的 relay 消失前停止拨号，
     // dsh 随后退出，最先启动的隧道枢纽 relay 最后回收。
+    if (remoteCleanup !== undefined) await remoteCleanup
     await supervisor.stopAll()
     lock.release()
     settle?.(code)
@@ -269,7 +280,7 @@ export async function run(argv: readonly string[]): Promise<number> {
         patchFiles: dshPatchFiles,
         extraArgs: config.dsh.extraArgs,
       }),
-      env: dshEnvironment,
+      env: { ...dshEnvironment, [THEME_FILE_ENV_NAME]: resolve(config.home, THEME_FILE_NAME) },
       onLine: (line) => {
         // dsh 0.1.7 对损坏 Bundle 是「stderr 诊断 + 跳过」而非启动失败；
         // dsh-station 依赖全部插件在位，这里把静默降级转成响亮警告。
@@ -378,6 +389,41 @@ export async function run(argv: readonly string[]): Promise<number> {
     })
   }
   if (!localMode) startConnectorChild(token)
+  else {
+    remote = createRemoteLifecycle({
+      startRelay: startRelayChild,
+      startConnector: () => startConnectorChild(dshTokenValue),
+      stopChild: name => supervisor.stop(name),
+      waitForReady: async (signal) => {
+        await waitForRemote({ port: config.relay.port, signal })
+        if (!signal.aborted) desktopAdminReady = relayAdminInitialized(config.relay.data)
+      },
+      onChange: (state, error) => {
+        if (shuttingDown || desktopUrls === undefined) return
+        desktopUrls = {
+          ...desktopUrls,
+          local: state === 'ready' ? `http://127.0.0.1:${String(config.relay.port)}/` : desktopUrls.dsh,
+        }
+        // 远程状态独立变化，不能把仍在信任重启的 dsh 提前宣告为 ready。
+        const phase = desktopPhase === 'restarting' ? 'restarting'
+          : state === 'starting' || state === 'stopping' ? 'remote' : 'ready'
+        if (state === 'starting') {
+          emit(phase, '正在启用远程服务（relay + connector）')
+          say('正在启用远程服务（relay + connector）……')
+        } else if (state === 'ready') {
+          say(`远程入口：http://127.0.0.1:${String(config.relay.port)}/`)
+          emit(phase, '远程服务已启用')
+        } else if (state === 'stopping') {
+          emit(phase, '正在停止远程服务（relay + connector）')
+        } else if (state === 'idle') {
+          emit(phase, '远程服务已停止，本机 dsh 继续运行')
+        } else if (state === 'failed') {
+          emit(phase, error)
+          console.error(`[dsh-station] ${error}；本机 dsh 继续运行，请退出并重新打开后重试。`)
+        }
+      },
+    })
+  }
 
   // membership 变化改变 dsh 必须信任的地址集合时自动重启 dsh，并连带重启
   // connector 上报新 token；relay 与本机地址不变，无需重启。进度写入
@@ -424,12 +470,17 @@ export async function run(argv: readonly string[]): Promise<number> {
       if (freshToken === undefined) {
         console.warn('[dsh-station] 重启后没有从 dsh 的输出里读到登录 token；通过 relay 访问时可能会看到 dsh 自己的 401。')
       }
-      await supervisor.stop(CONNECTOR_CHILD)
+      if (remote !== undefined) {
+        await remote.restartConnector(() => startConnectorChild(freshToken))
+      } else {
+        await supervisor.stop(CONNECTOR_CHILD)
+        if (shuttingDown) return
+        startConnectorChild(freshToken)
+      }
       if (shuttingDown) return
-      startConnectorChild(freshToken)
       writeRestartStatus({ state: 'done', added: [...change.added], removed: [...change.removed] })
       say('dsh 已自动重启完成，信任地址已更新。')
-      emit('ready')
+      emit(remote?.state === 'starting' || remote?.state === 'stopping' ? 'remote' : 'ready')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       writeRestartStatus({
@@ -500,33 +551,13 @@ export async function run(argv: readonly string[]): Promise<number> {
     say('本机模式：远程服务未启动；从桌面壳托盘「启用远程服务」按需启用。')
   }
 
-  /**
-   * 按需启用远程服务（D25，幂等）：补起 relay 与 connector，本机入口切回
-   * relay。connector 自带指数退避重连，relay 冷启动期间的首拨失败会自行
-   * 恢复；进程退出即回收，下次启动仍是本机模式，不记忆该状态。
-   */
-  const startRemoteServices = (): void => {
-    if (remoteStarted || shuttingDown) return
-    remoteStarted = true
-    emit('remote', '正在启用远程服务（relay + connector）')
-    say('正在启用远程服务（relay + connector）……')
-    startRelayChild()
-    startConnectorChild(dshTokenValue)
-    desktopUrls = {
-      local: `http://127.0.0.1:${String(config.relay.port)}/`,
-      admin: `http://127.0.0.1:${String(config.relay.port)}/_admin`,
-      dsh: `http://127.0.0.1:${String(config.dsh.port)}/`,
-    }
-    desktopAdminReady = relayAdminInitialized(config.relay.data)
-    say(`远程入口：http://127.0.0.1:${String(config.relay.port)}/`)
-    emit('ready', '远程服务已启用')
-  }
-
   // 控制命令在全部启动函数就绪后注册（避免启动早期命令触发未初始化闭包）；
   // 壳异常退出时由 Job Object 回收整棵后台进程树，早于注册的停止需求不悬空。
   desktop.listen((command) => {
     if (command.type === 'stop') void shutdown(0)
-    else if (command.type === 'start-remote') startRemoteServices()
+    else if (command.type === 'start-remote') void remote?.start().catch(reportFailure)
+    else if (command.type === 'stop-remote') void remote?.stop().catch(reportFailure)
+    else if (command.type === 'restart-remote') void remote?.restart().catch(reportFailure)
   })
 
   emit('ready')

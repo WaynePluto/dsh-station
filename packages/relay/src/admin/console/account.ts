@@ -48,8 +48,8 @@ export function accountPage(options: {
     : `<p class="notice" role="status">${escapeHtml(options.notice)}</p>`
   const enroll = enrollment === undefined
     ? ''
-    : `<div class="card"><h3>绑定新的验证器</h3>
-<p class="hint">这串密钥只在本次显示，离开或刷新本页就再也拿不回来。</p>
+    : `<div class="card"><h3>绑定新验证器</h3>
+<p class="hint">密钥仅显示一次，请在离开或刷新前完成绑定并安全备份。</p>
 ${enrollmentPanel({
       qrSvg: enrollment.qrSvg,
       secret: enrollment.secret,
@@ -59,26 +59,26 @@ ${enrollmentPanel({
     })}
 ${enrollment.confirmable
       ? ''
-      : '<p class="hint">重置已经注销了全部登录会话。扫码之后请用<strong>新的</strong>动态码重新登录，这次登录本身就会完成绑定。</p>'}</div>`
+      : '<p class="hint">请扫码后用<strong>新动态码</strong>重新登录，完成绑定。</p>'}</div>`
   return consolePage({
     current: ADMIN_ACCOUNT_PATH,
     machine: options.machine,
     title: '账号与安全',
     heading: '账号与安全',
-    intro: `当前账号 <strong>${escapeHtml(options.account)}</strong>。改密码和重置验证器都要先输入当前密码。`,
+    intro: `登录账号：<strong>${escapeHtml(options.account)}</strong>`,
     username: options.username,
     appearance: options.appearance,
     body: `${alert}${notice}${enroll}
 <div class="card"><h3>修改密码</h3>
+<p class="hint">修改后所有设备需用新密码重新登录。</p>
 <form method="post" action="${ADMIN_PASSWORD_PATH}">
 <input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <div class="field"><label for="currentPassword">当前密码</label><input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required maxlength="256"></div>
-<div class="field"><label for="newPassword">新密码（${PASSWORD_RULE_TEXT}）</label><input id="newPassword" name="newPassword" type="password" autocomplete="new-password" required minlength="${String(PASSWORD_MIN_CHARACTERS)}" maxlength="256"></div>
-<div class="field"><label for="confirmPassword">再输入一次新密码</label><input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required maxlength="256"></div>
-<button type="submit">修改密码</button></form>
-<p class="hint">改完之后全部登录会话都会被注销，每台设备都要用新密码重新登录。</p></div>
+<div class="field"><label for="newPassword">新密码</label><input id="newPassword" name="newPassword" type="password" autocomplete="new-password" aria-describedby="passwordRule" required minlength="${String(PASSWORD_MIN_CHARACTERS)}" maxlength="256"><p class="hint" id="passwordRule">${PASSWORD_RULE_TEXT}</p></div>
+<div class="field"><label for="confirmPassword">确认新密码</label><input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required maxlength="256"></div>
+<button type="submit">保存密码</button></form></div>
 <div class="card"><h3>重置验证器</h3>
-<p class="hint">换手机或者验证器丢了用这个。重置会作废旧的动态码，并注销全部登录会话。</p>
+<p class="hint">旧动态码将失效，所有设备需重新登录。</p>
 <form method="post" action="${ADMIN_TOTP_RESET_PATH}">
 <input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <div class="field"><label for="totpCurrentPassword">当前密码</label><input id="totpCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required maxlength="256"></div>
@@ -101,9 +101,9 @@ export function accountUnavailablePage(options: {
     machine: options.machine,
     title: '账号与安全',
     heading: '账号与安全',
-    intro: '这台机器上没有唯一的管理员账号，本页无法安全地判断该改谁的凭据。',
+    intro: '无法确定唯一的管理员账号。',
     username: options.username,
     appearance: options.appearance,
-    body: '<p class="empty">用 <strong>dsh-station-relay</strong> 命令行处理账号，改完之后本页会恢复正常。</p>',
+    body: '<p class="empty">请用 <strong>dsh-station-relay</strong> 命令行检查管理员账号后刷新。</p>',
   })
 }

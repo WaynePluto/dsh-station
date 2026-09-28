@@ -121,12 +121,10 @@ describe('D16 membership: this machine joining a hub', () => {
     const fixture = await startFixture()
 
     const { body } = await openConsole(fixture)
-    expect(body).toContain('的远程入口')
-    expect(body).toContain('还没有远程入口')
-    // 两个方向不能混淆：吊销挂在这台机器上的机器
-    // 不等于清除这台机器自己的远程入口。
-    expect(body).toContain('别的机器挂在')
-    expect(body).toContain('取消只影响')
+    expect(body).toContain('<h1>远程入口</h1>')
+    expect(body).toContain('未设置远程入口')
+    // 短副标题仍说明方向与单入口限制，取消后果留在确认页。
+    expect(body).toContain('<p class="intro">通过其他机器访问本机，同时仅使用一个远程入口。</p>')
     expect(membershipFileExists(fixture)).toBe(false)
   })
 
@@ -252,7 +250,8 @@ describe('D16 membership: this machine joining a hub', () => {
 
     // 没有它远程访问无法工作，因此页面不能保持沉默。
     const { body } = await openConsole(fixture)
-    expect(body).toContain('命令里没带')
+    expect(body).toContain('缺少浏览器地址，远程访问暂不可用')
+    expect(body).toContain('获取新令牌和完整连接命令')
   })
 
   it('leaves the hub without touching the machines that joined this one', async () => {
@@ -265,7 +264,7 @@ describe('D16 membership: this machine joining a hub', () => {
     })
 
     const reloaded = await openConsole(fixture)
-    expect(reloaded.body).toContain('挂在一台入口机器上')
+    expect(reloaded.body).toContain('已设置远程入口')
     // 离开要经过确认页面，而不是一键提交。
     expect(reloaded.body).toContain(`href="${ADMIN_MEMBERSHIP_LEAVE_PATH}"`)
     const confirm = await openAuthenticatedPage(fixture, {
@@ -354,7 +353,7 @@ describe('launcher dsh auto-restart status on the hub page', () => {
     })
 
     const { body } = await openConsole(fixture)
-    expect(body).toContain('dsh 已自动重启完成')
+    expect(body).toContain('dsh 已重启')
     expect(body).toContain('2026-09-14 16:50 UTC')
   })
 
@@ -372,15 +371,16 @@ describe('launcher dsh auto-restart status on the hub page', () => {
     expect(body).toContain('自动重启 dsh 失败')
     expect(body).toContain('dsh did not become ready')
     expect(body).toContain(`移除信任 ${HUB_AUTHORITY}`)
-    expect(body).toContain('右键托盘图标选择「重启」')
+    expect(body).toContain('退出并重新打开工作站')
   })
 
   it('renders no restart card while the launcher has not written one', async () => {
     const fixture = await startFixture()
 
     const { body } = await openConsole(fixture)
-    expect(body).not.toContain('自动重启 dsh')
+    expect(body).not.toContain('class="restart"')
     expect(body).not.toContain('正在自动重启')
+    expect(body).toContain('提交后会自动重启 dsh')
   })
 })
 
@@ -413,7 +413,7 @@ describe('remembering the last hub for one-click reconnect', () => {
     const left = await openConsole(fixture)
     expect(left.body).toContain('上次的远程入口')
     expect(left.body).toContain(`action="${ADMIN_MEMBERSHIP_RECONNECT_PATH}"`)
-    expect(left.body).toContain('重新连接这个远程入口')
+    expect(left.body).toContain('<button type="submit">重新连接</button>')
     expect(left.body).toContain(HUB_URL)
     expect(left.body).not.toContain(ENROLL_TOKEN)
   })
@@ -459,7 +459,7 @@ describe('remembering the last hub for one-click reconnect', () => {
     })
     // 重连后的页面不再显示重连卡片。
     const back = await openConsole(fixture)
-    expect(back.body).toContain('挂在一台入口机器上')
+    expect(back.body).toContain('已设置远程入口')
     expect(back.body).not.toContain('上次的远程入口')
   })
 
@@ -486,7 +486,7 @@ describe('remembering the last hub for one-click reconnect', () => {
     })
     expect(page.status, page.body).toBe(200)
     expect(page.body).toContain('已提交取消')
-    expect(page.body).toContain('稍后刷新本页查看最新状态')
+    expect(page.body).toContain('稍后刷新本页查看状态')
 
     // 重连后的页面：提示正在拨号与恢复信任地址。
     const consolePage = await openCsrfPage(fixture, {
@@ -505,7 +505,8 @@ describe('remembering the last hub for one-click reconnect', () => {
       label: 'reconnected',
     })
     expect(reconnected.body).toContain('已提交重新连接')
-    expect(reconnected.body).toContain('稍后刷新本页查看最新状态')
+    expect(reconnected.body).toContain('稍后刷新本页查看状态')
+    expect(reconnected.body).toContain('连接结果尚待确认')
 
     // 未知 done 值不渲染提示；普通页面也没有。
     const plain = await openConsole(fixture)

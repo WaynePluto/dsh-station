@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import http from 'node:http'
 import { once } from 'node:events'
 import { Buffer } from 'node:buffer'
@@ -102,6 +105,7 @@ async function startFixture(): Promise<Fixture> {
     .join('; ')
 
   const relay = createRelayServer({
+    home: mkdtempSync(join(tmpdir(), 'relay-integration-')),
     host: '127.0.0.1',
     port: 0,
     publicDomain: 'dsh.test',
@@ -144,6 +148,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map(async (fixture) => {
     fixture.connector.close()
     await fixture.relay.close()
+    rmSync(fixture.relay.config.home, { recursive: true, force: true })
     fixture.store.close()
     fixture.upstreamWss.close()
     await new Promise<void>(resolve => fixture.upstream.close(() => resolve()))

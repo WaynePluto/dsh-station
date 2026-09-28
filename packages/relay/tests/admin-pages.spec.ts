@@ -23,8 +23,8 @@ const PASSWORD = 'Correct horse battery staple 1'
 
 /** 标签栏提供的所有页面，按列出顺序排列。 */
 const CONSOLE_PAGES: readonly { path: string; heading: string }[] = [
-  { path: ADMIN_PATH_PREFIX, heading: '能打开的机器' },
-  { path: ADMIN_HUB_PATH, heading: '的远程入口' },
+  { path: ADMIN_PATH_PREFIX, heading: '机器' },
+  { path: ADMIN_HUB_PATH, heading: '远程入口' },
   { path: ADMIN_ACCOUNT_PATH, heading: '账号与安全' },
 ]
 
@@ -63,17 +63,17 @@ afterEach(async () => {
 })
 
 describe('console pages behind one tab strip', () => {
-  it('serves each page, and every page links to all four', async () => {
+  it('serves each page, and every page links to all three tabs', async () => {
     const fixture = await startFixture()
 
     for (const target of CONSOLE_PAGES) {
       const page = await open(fixture, target.path)
       expect(page.status, `${target.path} -> ${page.body}`).toBe(200)
-      expect(page.body).toContain(target.heading)
-      // 每个页面都必须说明此控制台管理哪台机器：所有页面
-      // 看起来都一样，而每句关于从一台机器打开另一台机器的话
-      // 都需要操作员可以核对的主语。
-      expect(page.body).toContain('你正在管理 ')
+      expect(page.body).toContain(`<h1>${target.heading}</h1>`)
+      // 精简描述不能省略当前管理的机器或混淆登录状态。
+      expect(page.body).toContain('当前机器：')
+      expect(page.body).toContain('已登录：admin')
+      expect(page.body).not.toContain('signed in as')
       // 标签栏是找到其他页面的唯一入口，因此它必须在每个页面上
       // 完整显示，并且恰好有一个当前标签。
       for (const tab of CONSOLE_PAGES) expect(page.body).toContain(`href="${tab.path}"`)

@@ -15,19 +15,19 @@
 
 | 模块 | 路径与入口 | 职责 | 主要依赖 |
 |---|---|---|---|
-| 控制面协议 | `packages/protocol/src/index.ts` | 控制帧/schema、编解码、挑战签名消息、membership 与 dsh 重启状态文件契约、版本及超时 | zod；不依赖其他 workspace 包 |
+| 控制面协议 | `packages/protocol/src/index.ts` | 控制帧/schema、编解码、挑战签名消息、membership、dsh 重启状态与只读主题投影契约、版本及超时 | zod；不依赖其他 workspace 包 |
 | Connector | `packages/connector/src/cli.ts`、`connector.ts` | Ed25519 身份、membership 监听、控制信道、回拨数据流、退避与致命退出 | protocol、ws、pino、Node net/crypto/fs |
 | Relay | `packages/relay/src/cli.ts`、`server.ts` | 浏览器/设备认证、管理页面、机器路由、HTTP/WS 转发、隧道注册表 | protocol、ws、hono、jose、otplib、pino、node:sqlite |
-| Launcher | `packages/launcher/src/index.ts` | 配置、profile 初始化、第三方插件首次安装/配套升级、产物定位、trusted host、membership 信任变化时自动重启 dsh、子进程的启动与监督；`--desktop` 默认本机模式（D25，只起 dsh，`start-remote` 命令按需补起 relay + connector），CLI 全量 | protocol、commander、zod、官方 plugin-manager；manifest 携带 dsh、relay、connector 与壳级 overlay，不再携带功能插件作为安装锚 |
+| Launcher | `packages/launcher/src/index.ts` | 配置、profile 初始化、第三方插件首次安装/配套升级、产物定位、trusted host、membership 信任变化时自动重启 dsh、子进程的启动与监督；`--desktop` 默认本机模式（D25，只起 dsh，`start-remote`/`stop-remote`/`restart-remote` 按需启停 relay + connector，`remote-ready.ts` 有界探测本机转发链路后才报就绪），CLI 全量 | protocol、commander、zod、官方 plugin-manager；manifest 携带 dsh、relay、connector 与壳级 overlay，不再携带功能插件作为安装锚 |
 | 纯浏览器 UI 辅助 | `packages/plugin-ui/src/index.ts` 及职责文件 | dialog 几何/pointer 生命周期、导航图标、Inspector/dock 样式、共享测试纯函数；不注册 dsh service | React 类型/运行时 external；被插件 browser bundle 内联 |
 | 设置与模型插件（7） | `packages/plugins/{agents-md,proxy,copilot-auth,models-catalog,model-capabilities,favorite-models,notify}` | 全局提示词、出网代理、模型登录/目录/能力/收藏、桌面通知 | dsh 设置/连接/槽位；代理用 undici，模型目录用 pi-ai |
 | 会话插件（3） | `packages/plugins/{turn-retry,chat-scroll,user-message-fork}` | 重试、滚动、用户消息分叉 | dsh 会话/投影/浏览器 UI；仅 turn-retry 有实质宿主业务 |
 | 工作区与工具插件（5） | `packages/plugins/{services,terminal,tools-inspector,skills-inspector,files}` | 常驻服务、交互终端、工具/技能历史、右侧 Sidebar 只读文件浏览 | dsh live Agent、工具、PTY、RPC、Sidebar slots；services 自有 Node 进程管理引擎 |
-| 环境与预设（6） | `packages/plugins/{remote-settings,remote-privileged,browser-compat,directory-picker-browse,yolo-mode,concise-mode}` | 远程设置（ownsHost、顶部 Open In… Explorer 立即返回与置前增强）、旧 WebKit API 垫片与临时浏览器诊断、网页目录选择、固定 YOLO、精简预设；remote-privileged 携带壳级 connection 注入和模型 HMR 启动屏障 | 功能组件进入第三方分发 Bundle；remote-privileged 由壳常驻加载 |
+| 环境与预设（6） | `packages/plugins/{remote-settings,remote-privileged,browser-compat,directory-picker-browse,yolo-mode,concise-mode}` | 远程设置（ownsHost、顶部 Open In… Explorer 立即返回与置前增强）、旧 WebKit API 垫片与临时浏览器诊断、网页目录选择、固定 YOLO、精简预设；remote-privileged 携带壳级 connection 注入、模型 HMR 启动屏障与原生主题只读投影 | 功能组件进入第三方分发 Bundle；remote-privileged 由壳常驻加载 |
 | 开发与验证脚本 | `scripts/dev-stack.mjs`、`dev-runtime.mjs`、`plugin-distributions.mjs`、`prepare-desktop.mjs`、`local-config.mjs`、`*-check.mjs` | 本地全链路、隔离 dsh 运行时、开发插件介质、插件契约冒烟与依赖检查 | launcher/relay 源码模块、Node；脚本各自声明环境前提 |
 | 发行打包 | `scripts/release.mjs`（统一入口）、`scripts/pack.mjs`（服务版 zip，仅 linux-x64）、`scripts/pack-desktop.mjs`（桌面 setup/portable）、`packaging/`、`.github/workflows/` | 四个发布端介质（D22：win/mac/linux 桌面版 + Linux 服务版，各 lite/full；桌面再分 setup/portable）、构建一次串行打包、产物检查、启动脚本、图标、CI | archiver、pnpm、Go 工具链；服务版不带 Node 二进制 |
 | Windows 托盘（已退役） | `packaging/win-launcher/*.go` | 菜单、单实例、自启动、日志轮转、Node launcher 生命周期；win 服务版退役（D22）后不再随介质构建，syso 资源仍供桌面壳，去留见路线图 | Go 标准库、Win32 API；同一 `package main`，无第三方 Go 包 |
-| 桌面应用 | `packages/desktop/{main,config,bootstrap,statuspage,backend,discover,notifypipe}.go`、`tray_windows.go` | Wails v2 单窗口：独立模式托管自有 launcher 后台（`--desktop` 状态行契约 + 实例锁 + 随包/系统 Node 发现），attach 模式附着开发栈；AssetServer 持有 webview 初始导航直到后台就绪再 302 进真实 origin；Win32 托盘只含显示/浏览器打开/退出（后台启停不设入口，恢复靠退出重开）；通知管道带共享令牌 | 独立 Go module `github.com/wailsapp/wails/v2@v2.16.0`；原生网络/权限隔离（S1.3）仍未实现，mac/Linux 托盘与实机验收待 S10 |
+| 桌面应用 | `packages/desktop/{main,config,bootstrap,statuspage,backend,backend_events,remote,remote_control,remote_navigation,navigation,startup_loading,admin_loading,loading_stream,loading_client,discover,notifypipe}.go`、`tray_windows.go` | Wails v2 单窗口：独立模式托管自有 launcher 后台（`--desktop` 状态行契约 + 实例锁 + 随包/系统 Node 发现），attach 模式附着开发栈；受管模式 AssetServer 立即 302 到临时 loopback 启动页，就绪后顶层交接真实 origin；Win32 托盘含显示/浏览器打开/启用、停止、重启远程/退出；`remote.go`/`remote_control.go`/`navigation.go` 提供状态、应答跟踪与共享动作，管理入口先打开 `admin_loading.go` 的临时只读加载页；开发桌面同样受管，仅显式 attach 只读；通知管道带共享令牌 | 独立 Go module `github.com/wailsapp/wails/v2@v2.16.0`；原生网络/权限隔离（S1.3）仍未实现，mac/Linux 托盘与实机验收待 S10 |
 
 20 个功能组件按 `plugin-catalog.json` 分发为 4 个组合包与 6 个独立第三方 Bundle；首次默认安装，仍安装项随 dsh-station 配套升级，卸载后不自动补回。唯一随 `--patch` 传入的是 remote-privileged 的壳级 overlay，包含 connection 注入和模型 HMR 启动屏障，不属于第三方插件生命周期。`@dsh-station/plugin-ui` 是构建期辅助，也不进入分发清单。
 具体功能及使用限制见 [插件索引](docs/plugins.md) 和各包 README。
@@ -71,7 +71,7 @@ graph TD
 | plugins → undici | `packages/plugins/proxy/src/dispatcher.ts:22` |
 | launcher/relay/connector/protocol → zod | 各包的 `src/config.ts`（protocol 为 `src/frames.ts`） |
 | pack → archiver | `scripts/pack.mjs:42`（经 `pack/archive.mjs`）、`scripts/pack-desktop.mjs:34` |
-| desktop → Wails | `packages/desktop/main.go`：Wails app、托盘回调与模式选择；`bootstrap.go`（attach 引导 302）/`statuspage.go`（独立模式持有初始导航）；`backend.go` 托管 launcher 子进程并解析 `@@DSH_STATION` 状态行 |
+| desktop → Wails | `packages/desktop/main.go`：Wails app、托盘回调与模式选择；`bootstrap.go`（attach 引导 302）/`startup_loading.go`（受管启动加载与认证交接）/`statuspage.go`（资产故障兜底）；`backend.go` 托管 launcher 子进程并解析 `@@DSH_STATION` 状态行 |
 
 这些核心包级生产 import 边未形成环；未发现插件相互 import/re-export。
 补充 TypeScript AST 扫描覆盖 377 个 TS/TSX/MJS 文件，可解析的本地相对路径值导入图也未发现环。
@@ -87,6 +87,7 @@ graph TD
 - `http/security.ts` 校验原始请求；`proxy.ts` 与 `upgrade.ts` 分别传送 HTTP 和 WS。
 - `tunnel/server.ts` 处理控制/数据连接；`registry.ts` 管理在线机器、pending stream 与一次性 token。
 - `store/` 持有 SQLite 和迁移；`audit/` 写数据库及 pino；`membership/` 管理本机远程入口文件。
+- `admin/native-theme.ts` 以有界读取+目录watch持有本机主题投影；`theme-events.ts` 管认证后的有界NDJSON流，`theme-client.ts` 是固定哈希的管理页只读脚本。登录/首次设置仍使用独立Cookie与无脚本外壳。
 - 请求顺序必须保留：浏览器认证 → 原始 Host/Origin/sec-fetch-site → 隧道；upgrade 单独处理。
 - 公开固定资源、主题切换、设置/认证入口有各自显式分支，不能用统一中间件随意重排。
 
@@ -95,14 +96,18 @@ graph TD
 - connector 的 `connector.ts` 管重连/membership 状态；`control.ts` 管单次认证/心跳；`stream.ts` 管字节搬运。
 - launcher 的 `profile.ts` 初始化基础 profile，`plugin-catalog.ts` / `plugin-lifecycle.ts` 管第三方插件分发，`dsh-plugins.ts` 只管壳级 overlay；`dsh.ts`/`relay.ts`/`connector.ts` 生成各自启动参数。
 - `supervisor.ts` 管子进程、输出及停止；`jwt-secret.ts` 和 `membership.ts` 只处理对应本地配置。
+- `remote-ready.ts` 串行请求既有 loopback 首页，按 200/303 确认 relay → connector → dsh 就绪；不读取正文或跟随 token 重定向，20 秒超时，随 shutdown 取消。
+- `remote-lifecycle.ts` 管桌面远程启用/停止/重启：按 connector→relay 停止，成功回到 idle 或直接重新启用；不重启 dsh、不修改 membership。失败只清理本次远程子进程，保留 dsh；ready 后的致命退出交回 supervisor 整套停机。remoteState/remoteError 与本机阶段分开上报，探测代次与取消保护防止旧任务复活子进程。
 - launcher 不实现账号管理页面；`relay-admin.ts` 只读数据库判断是否已有管理员。
 - dsh、relay、connector 是 launcher **spawn 的独立进程**，不是 launcher import 后在进程内运行。
 - 标准 `DSH_HOME` 保存 dsh 设置/会话；dsh-station home 保存设备身份、membership、relay 数据，二者独立。
 
 ### 桌面预览与后台所有权
 
-- `packages/desktop/` 有两种模式：默认独立模式托管自有后台（发现随包载荷与 Node、在 `wails.Run` 前拉起 launcher 与 WebView2 初始化并行、实例锁防双开、Job Object 崩溃回收），`--attach` 开发模式附着已运行栈（编排器先拉栈再起壳，启动同样并行）。托盘「启动/重启后台」通过壳自重启恢复（webview 初始导航一生一次，页面发起的跳转进不了 relay——见 statuspage.go 注释）。
-- Wails AssetServer 在 attach 模式对 `/` 发一次 302；独立模式持有初始导航直到 relay 端口监听再 302（launcher 先起 relay，插件同步与 dsh 就绪前的等待由 relay 自己的重试页承担；Wails v2 首次导航完成前不显示窗口，窗口出现时刻≈relay 监听时刻）。HTTP/WS、认证和插件资源均从真实 relay origin 加载，不对业务页提供除窗口控制外的 Go Bindings。桌面介质由 `scripts/pack-desktop.mjs` 在对应平台产出（win NSIS setup + 便携 zip、mac DMG + .app 便携 zip、linux deb + 便携 zip，统一入口 `scripts/release.mjs`），随包 Node 清单在 `packaging/desktop-node.json`。**没有原生网络/系统权限隔离（S1.3）**；参数校验只限定初始地址，风险及构建方式见 `packages/desktop/README.md`。
+- 默认发行桌面与 `dev:desktop` 共用 `backendManager` 托管 launcher，默认只起 dsh。开发通过 `--dev-root` 运行 `scripts/dev-desktop-backend.mjs`：准备 runtime、复用 `dev-plugin-build.mjs` 指纹缓存，再启动同一构建产物；只桥接状态/控制，不复制进程编排。开发 home、端口与单实例独立。显式 `--attach` 才附着外部完整栈，不接管或启用它。
+- `remote_control.go` 通过 stdin 发送远程启停命令并保留应答；停止/重启收到 stopping 后才接受终态，避免旧 ready 提前解锁菜单。`navigation.go` 以事件订阅等待结果（启用/停止25秒，重启45秒）；关闭远程前经 `remote_navigation.go` 请求条件回退，只将精确relay来源的内置页面替换为已校验的dsh直连认证入口。停止后OnDomReady复核迟到导航，直连工作台与外部浏览器不强制切换，不增加Go绑定或HTTP控制接口。
+- `navigation.go` 统一托盘和标题栏管理动作：先创建/打开临时 loopback 能力加载页，再异步发送启用命令；`admin_loading.go` 只读状态，不提供启动 HTTP 接口或代理业务。Wails 仅放行无凭据配置握手中的 dsh/relay 精确 origin，加载页不获得 Go 绑定。
+- `startup_loading.go` 在受管模式让 AssetServer 立即 302 到能力保护的临时 loopback 文档，展示动画/阶段；与管理页共用 `admin_loading.go` 的安全/生命周期限制。`backend_events.go` 原子快照订阅驱动 `loading_stream.go` 的单次 NDJSON 流，`loading_client.go` 共用有界客户端解析；无定时查询。认证入口就绪即经固定 `/enter` 返回无正文 token 重定向，由原生加载页/工作台接管，不保留项目 overlay 或等待动画。状态不含 token，业务始终直连 dsh，加载服务不提前启动 relay。仅服务创建失败时使用资产故障页。显式 attach 仍持有 `/` 等 relay 后 302。壳在 WebView2 的 OnStartup 就绪时显示，不等首次导航完成。HTTP/WS、认证和插件资源均从真实 dsh/relay origin 加载，仅提供窗口控制与固定工作台/管理入口导航的无参 Go Bindings。桌面介质由 `scripts/pack-desktop.mjs` 在对应平台产出（win NSIS setup + 便携 zip、mac DMG + .app 便携 zip、linux deb + 便携 zip，统一入口 `scripts/release.mjs`），随包 Node 清单在 `packaging/desktop-node.json`。**没有原生网络/系统权限隔离（S1.3）**；参数校验只限定初始地址，风险及构建方式见 `packages/desktop/README.md`。
 
 ### 插件双端与运行期协作
 
@@ -116,7 +121,7 @@ graph TD
 - `proxy` 沿用 dsh 原生代理策略的同一实例，为原生 fetch 与官方网页抓取提供跟随环境（默认）、使用插件代理地址、强制直连三态；不承诺接管子进程、独立 WebSocket 或独立网络库，不能为每个模型插件增加另一份代理配置。
 - `plugin-ui` 只由浏览器侧消费，client tsdown 配置把它内联；React、Cordis、store、slots、ui-primitives 仍 external，避免页面出现第二个单例。
 - 浏览器 React/Cordis/store/slots/ui-primitives external；不能通过“共享工具包”重复打包这些单例。
-- SettingsScope.mutate 可能拒绝写入却正常 resolve；必须共享校验、保存回读、失败保留草稿。
+- configForms.mutate/set/unset 返回boolean；false是宿主拒绝，必须保留草稿。主题投影以宿主配置重载提交点为准，不把浏览器的乐观配色事件当作持久化回执。
 
 ## 5. 装载、交付与验证
 
@@ -144,6 +149,7 @@ graph TD
   dependencies 只保留运行时和壳级 overlay，不再承担功能插件安装锚。打包检查覆盖介质目录、
   依赖闭包、宿主/浏览器产物、离线内容和可搬移路径。
 - 唯一 CLI overlay 是 remote-privileged；它由 launcher 强制解析并传给 dsh，不可停用或卸载。
+  `theme-projection.mjs` 等loader就绪并订阅原生配置重载提交事件，只读ui-theme偏好，经原子文件 `dsh-theme.json` 交给relay；路径由launcher/dev-stack的 `DSH_STATION_THEME_FILE` 指定，未提供时不猜home、不写文件。投影跨临时断连保留最后值，管理页不反向修改dsh设置。
   除 connection 注入外，它固定 `llm-pi-ai` 的两个模型启动依赖，并在模型增强未随进程启动时提供
   root-fiber 占位屏障，避免 Bundle 在线启停触发上游模型适配器热重启。
 - 简洁模式的两个预设在 Bundle patch 中内联声明 `@deepseek-ai/dsh-agent-preset` 行，不加载 preset root 或 locator entry；子代理深度由 dsh 原生界面配置，默认 1。

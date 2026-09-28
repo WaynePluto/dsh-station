@@ -1,5 +1,6 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { Buffer } from 'node:buffer'
+import { ADMIN_THEME_CSP_EXTENSION, ADMIN_THEME_SCRIPT } from './theme-client.js'
 import {
   PASSWORD_MIN_CHARACTERS,
   PASSWORD_REQUIRED_CLASSES,
@@ -19,7 +20,7 @@ import {
  * 所有要求输入密码的地方都会在字段旁和拒绝消息中渲染完全相同的文本：
  * 操作员只有失败后才知道规则，正是人们退回复用其他地方密码的原因。
  */
-export const PASSWORD_RULE_TEXT = `至少 ${String(PASSWORD_MIN_CHARACTERS)} 个字符，并且用上大写字母、小写字母、数字、符号里的至少 ${String(PASSWORD_REQUIRED_CLASSES)} 类`
+export const PASSWORD_RULE_TEXT = `至少 ${String(PASSWORD_MIN_CHARACTERS)} 个字符，包含大写字母、小写字母、数字、符号中的至少 ${String(PASSWORD_REQUIRED_CLASSES)} 类`
 
 /**
  * @param error - 违反的策略。
@@ -84,12 +85,13 @@ html{scrollbar-gutter:stable}
  * 配色、字号比例和几何尺寸使用 dsh 自己的设计 token，复制自
  * `packages/client/ui-theme/src/styles/design-platform.css` 和 `ui-primitives` 组件样式
  * （input h32/r8、胶囊按钮 h36/r18、card r12、dialog r24），使 relay 页面与其后的 dsh UI
- * 看起来像同一个产品。dsh 用内联脚本解析 `system`；这些页面完全没有脚本（`default-src 'none'`），
+ * 看起来像同一个产品。dsh 用内联脚本解析 `system`；relay 的明暗解析仍用CSS，
  * 因此通过 media query 解析，两个显式选项则由 server 从 cookie 渲染成 attribute。
  */
 const PAGE_STYLE = `
 ${TOKEN_STYLE}
-body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px 16px;background:var(--page);color:var(--ink);font-family:var(--font);font-size:14px;line-height:22px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+/* 页面留白与桌面标题栏占位分开；窄屏时变量也随媒体查询更新。 */
+body{--dsh-station-page-top-gap:24px;margin:0;min-height:100dvh;display:grid;place-items:center;padding:var(--dsh-station-page-top-gap) 16px 24px;background:var(--page);color:var(--ink);font-family:var(--font);font-size:14px;line-height:22px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 main{width:min(100%,440px);border:1px solid var(--line);border-radius:24px;background:var(--card);box-shadow:var(--shadow);overflow:hidden}
 .brand{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 24px 0;font-size:13px;line-height:20px;font-weight:500;color:var(--ink-2)}
 .mark{display:inline-flex;align-items:center;gap:8px;min-width:0}
@@ -122,7 +124,7 @@ button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .empty{margin:12px 0 0;padding:14px;border:1px dashed var(--line-strong);border-radius:12px;font-size:13px;line-height:20px;color:var(--ink-3)}
 .cmd,.secret,.otp{margin:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--inset);font-family:var(--mono);font-size:13px;line-height:20px;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;user-select:all}
 .foot{margin:20px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:12px;line-height:18px;color:var(--caption)}
-@media(max-width:460px){body{padding:12px 8px}.brand{padding:16px 18px 0}.panel{padding:14px 18px 20px}.theme a{padding:2px 6px}}
+@media(max-width:460px){body{--dsh-station-page-top-gap:12px;padding:var(--dsh-station-page-top-gap) 8px 12px}.brand{padding:16px 18px 0}.panel{padding:14px 18px 20px}.theme a{padding:2px 6px}}
 `.trim()
 
 /**
@@ -189,8 +191,8 @@ function themeSwitcher(appearance: PageAppearance): string {
 /**
  * 将页面内容包进共享 relay 文档外壳。
  * @param options 页面标题、面板主体 markup、追加在共享样式表后的可选页面专属 CSS，
- * 要渲染的外观，以及可选的自动重试间隔（秒）——这些页面没有脚本
- * （`default-src 'none'`），自动重试只能用 meta refresh 表达。
+ * 要渲染的外观、管理页只读主题脚本开关，以及可选的自动重试间隔（秒）。
+ * 非管理页保持无脚本，自动重试用 meta refresh 表达。
  * @returns 完整的 HTML 文档。
  */
 export function renderPage(options: {
@@ -198,6 +200,8 @@ export function renderPage(options: {
   body: string
   extraStyle?: string
   appearance?: PageAppearance
+  /** 仅管理页启用固定的只读主题流，登录与首次设置仍无脚本。 */
+  nativeTheme?: boolean
   refreshSeconds?: number
 }): string {
   const extra = options.extraStyle === undefined ? '' : `\n${options.extraStyle}`
@@ -217,25 +221,51 @@ ${PAGE_STYLE}${extra}
 </style>
 </head>
 <body><main>
-<header class="brand"><span class="mark"><img src="${ICON_SVG_PATH}" alt="" width="22" height="22">dsh-station</span>${themeSwitcher(appearance)}</header>
+<header class="brand"><span class="mark"><img src="${ICON_SVG_PATH}" alt="" width="22" height="22">DSH 工作站</span>${options.nativeTheme ? '' : themeSwitcher(appearance)}</header>
 <section class="panel">
 ${options.body}
-</section></main></body></html>`
+</section></main>${options.nativeTheme ? `<script>${ADMIN_THEME_SCRIPT}</script>` : ''}</body></html>`
 }
 
+/** 固定脚本只探测当前同源 URL；不跟随或读取 token 重定向，就绪后交给顶层导航交换。 */
+const SPLASH_SCRIPT = `(() => {
+  let stopped = false;
+  let retry;
+  let controller;
+  window.addEventListener('pagehide', () => {
+    stopped = true;
+    clearTimeout(retry);
+    controller?.abort();
+  }, { once: true });
+  async function probe() {
+    controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    let ready = false;
+    try {
+      const response = await fetch(location.href, {
+        mode: 'same-origin', credentials: 'same-origin', cache: 'no-store',
+        redirect: 'manual', headers: { Accept: 'text/plain' }, signal: controller.signal
+      });
+      ready = response.ok || response.type === 'opaqueredirect'
+        || (response.status >= 400 && response.status < 500 && response.status !== 429);
+      await response.body?.cancel();
+    } catch {
+      // 网络失败与超时保持等待，不中断动画。
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (stopped) return;
+    if (ready) location.reload();
+    else retry = setTimeout(probe, 200);
+  }
+  void probe();
+})();`
+
 /**
- * 本机 loopback 的启动等待页：复刻 dsh 自己的启动页（`packages/client/web/src/boot-page.ts`
- * + `boot-page.module.css`）——同样的 HARNESS 字标、进度弧转圈与三元素卡片布局，
- * 色值即上方 token（dsh 启动页回退值与本表同源同值）。这样等待 → dsh 的
- * 「Loading plugins…」像是同一页只换了底部文字；进度弧固定在 dsh 的起始角 72°，
- * 交接瞬间两者视觉一致。仍然无脚本，自动重试靠 meta refresh（每 0.2 秒重访 `/`，
- * 上线后 relay 的下一次回答就是 303）。
- *
- * 两个对齐细节：dsh 启动页没有 box-sizing reset（content-box），20px 内容宽 +
- * 2px 边框的外径是 24px——本表 token 全局 border-box，因此写 24px 才与它等大；
- * 旋转周期保持 dsh 的 1s 量级（60Hz 下每帧约 6°，平滑）。0.2s 的重载会截断动画、
- * 弧在起始角附近小幅步进——这是缩短上线延迟（平均省约 0.4 秒）换来的取舍；
- * 交接到 dsh 后由它自己的 0.8s 节奏接管。
+ * 本机 loopback 启动等待页：保留 HARNESS 字标、三元素布局与主题色。
+ * 24px 外径（border-box）与 dsh 启动页的 20px 内容 + 2px 边框等大。
+ * 固定弧长匀速转圈只表示正在等待，不模拟进度；探测不重建文档，避免动画相位重置。
+ * 脚本禁用时才用每秒刷新兜底。远程离线页与管理页不使用此脚本及其 CSP。
  * @param appearance 要渲染的外观。
  * @returns 独立的 HTML 文档。
  */
@@ -245,7 +275,7 @@ export function renderSplashPage(appearance: PageAppearance): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="0.2">
+<noscript><meta http-equiv="refresh" content="1"></noscript>
 <title>DSH 工作站</title>
 ${ICON_LINKS}
 <style>
@@ -255,8 +285,7 @@ body{display:grid;place-items:center;background:var(--page);color:var(--ink);fon
 .card{display:flex;flex-direction:column;align-items:center;gap:16px}
 .wordmark{font-size:16px;line-height:24px;font-weight:600;letter-spacing:.08em;color:var(--ink)}
 .hint{font-size:12px;line-height:18px;color:var(--ink-3)}
-.spin{position:relative;width:24px;height:24px;border-radius:50%;border:2px solid var(--line);animation:splash-spin 1s linear infinite}
-.spin::after{content:"";position:absolute;inset:-2px;border-radius:inherit;background:conic-gradient(var(--ink) 72deg,transparent 0);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2px),#000 0);mask:radial-gradient(farthest-side,transparent calc(100% - 2px),#000 0)}
+.spin{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--ink);animation:splash-spin 1s linear infinite}
 @keyframes splash-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.spin{animation:none}}
 </style>
@@ -265,8 +294,9 @@ body{display:grid;place-items:center;background:var(--page);color:var(--ink);fon
 <div class="card">
 <div class="wordmark">HARNESS</div>
 <div class="spin" aria-hidden="true"></div>
-<div class="hint">正在启动 DSH 工作站…</div>
+<div class="hint" role="status">正在启动 DSH 工作站…</div>
 </div>
+<script>${SPLASH_SCRIPT}</script>
 </body></html>`
 }
 
@@ -304,16 +334,21 @@ export function sameOrigin(
   }
 }
 
-/** 没有脚本、没有外部资源：每个 relay 页面都是自包含的 HTML。 */
+/** 默认页面无脚本；本机启动等待页的唯一例外使用下方独立 CSP。 */
 // `img-src 'self'` 只覆盖 favicon：Firefox 会将页面 CSP 应用于图标获取，
 // 没有它每次加载页面都会记录违规。页面内容本身仍不携带外部图片——TOTP QR code
 // 特意使用内联 SVG。
 export const PAGE_CSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
-export function htmlHeaders(setCookies: readonly string[] = []): Headers {
+/** 只允许上述固定脚本与同源探测，不向默认页面放开脚本权限。 */
+export const SPLASH_CSP = `${PAGE_CSP}; script-src 'sha256-${createHash('sha256').update(SPLASH_SCRIPT).digest('base64')}'; connect-src 'self'`
+
+export const ADMIN_CSP = `${PAGE_CSP}; ${ADMIN_THEME_CSP_EXTENSION}`
+
+export function htmlHeaders(setCookies: readonly string[] = [], policy = PAGE_CSP): Headers {
   const headers = new Headers({
     'cache-control': 'no-store',
-    'content-security-policy': PAGE_CSP,
+    'content-security-policy': policy,
     'content-type': 'text/html; charset=utf-8',
     // 在 no-referrer 下，Chromium 会将表单 POST Origin 序列化为 "null"，
     // 使合法的同源登录无法与 sandbox 区分。
