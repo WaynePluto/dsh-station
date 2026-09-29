@@ -166,9 +166,9 @@ line-height:1.4; white-space:nowrap`，SVG `display:block; flex:none`。这样�
 
 ### 桌面标题栏占位与页面外留白
 
-先区分卡片外部留白与标题内部 padding。0.1.7-rc.2 原生设置采用 fixed 居中 overlay，面板高度
-`min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-top-clearance,24px))))`；
-依据是 `packages/client/ui-settings-general/src/client/SettingsRoot.module.css`，已按当前发布包复核，本地旧 checkout 可能没有 clearance 变量。
+先区分卡片外部留白与标题内部 padding。0.2.0-rc.2 原生设置采用 fixed 居中 overlay，面板高度
+`min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-overlay-top,24px))))`；
+依据是 `packages/client/ui-settings-general/src/client/SettingsRoot.module.css`，已按当前源码复核，本地旧 checkout 可能没有 overlay-top 变量。
 独立 relay 管理文档仍需顶部对齐，不能照搬整套居中 modal；壳注入36px标题栏时也不能直接覆盖页面24px padding。
 项目实例用 `--dsh-station-page-top-gap`（窄屏12px）与标题栏占位 calc 相加，未定义变量的dsh回退0；
 不要一次读取 computed padding 后写死，否则响应式切换会丢失。保留border-box，防止height:100%链底部裁切。

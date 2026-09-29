@@ -119,7 +119,7 @@ launcher、开发栈和打包脚本必须同时检查宿主与浏览器产物。
 ## 原生客户端加载页
 
 出处：`packages/client/web/src/boot-page.ts`、`src/boot.ts`、
-`packages/client/ui-renderer/src/client/index.ts`；对照 0.1.7-rc.2 发布的 Web 前端产物确认。
+`packages/client/ui-renderer/src/client/index.ts`；对照 0.2.0-rc.2 发布的 Web 前端产物确认。
 
 `AppWebEntry` 构造时创建 `BootPage`（`Loading plugins…`），随后在当前浏览器文档里
 预取、加载并激活客户端插件，最后交给 `uiRenderer` 挂载工作台；没有最短展示时间。
@@ -201,7 +201,7 @@ settings.section 没有 icon 字段，导航 shell 按 id 选择图标，未知 
 项目的代理、通知、全局提示词和浏览器日志使用局部导航标记和注入样式，不替换 React 节点。
 当前图标映射为 `IconGlobeOutlineMedium`、`IconAlarmClockOutlineMedium`、`IconListPenOutlineMedium` 和
 `IconCodeOutlineMedium`；`settings.section` 没有 icon 字段，因此插件调用这些原生 component 并将
-返回的 SVG element 序列化成导航 mask。已安装的 0.1.7-rc.2
+返回的 SVG element 序列化成导航 mask。已安装的 0.2.0-rc.2
 `@deepseek-ai/dsh-client-ui-primitives/lib/index.js` 中，这些 component 返回的 React element
 先以纯函数 Artwork 为 `type`，Artwork 再返回原生 `<svg>`；项目公共 helper 必须有界展开函数包装，
 不能只接受 `type === 'svg'`，否则四个设置页插件启动即失败。
@@ -292,7 +292,7 @@ React 重建或旧 WebKit flex 布局中丢失。升级检查包含 `navCell`/`n
 
 ### 原生主题偏好的作用域
 
-已按 0.1.7-rc.2 的 ui-theme、ui-settings、config-editor 发布产物核对；本地旧 checkout 不作为此结论基线。
+已按 0.2.0-rc.2 的 ui-theme、ui-settings、config-editor 源码核对；本地旧 checkout 不作为此结论基线。
 出处：`packages/client/ui-theme/src/{index.ts,theme-settings.ts,boot-theme.ts,client/index.ts}`、
 `packages/client/ui-settings/src/client/config-form.ts`、`packages/boot/config-editor/src/index.ts`。
 
@@ -315,7 +315,7 @@ React 重建或旧 WebKit flex 布局中丢失。升级检查包含 `navCell`/`n
   读 `fiber.config.preference.get()`；没有可用原生行时保留旧投影并输出固定诊断，不猜默认配置。
 - 订阅 `app-boot/config-reload`：`reconcileProfilePatches` 完成活跃性校验后广播，ConfigEditor 持久化修改会经过此路径。
   原生 `settings.describe()` 返回完整描述列表，不接收 namespace 参数；不把定向 `loader/volatile-update` 当作全局事件。
-  来源：`packages/boot/app-boot/src/profile.ts`、`packages/boot/config-editor/src/index.ts`；已核对0.1.7-rc.2产物。
+  来源：`packages/boot/app-boot/src/profile.ts`、`packages/boot/config-editor/src/index.ts`；已核对0.2.0-rc.2源码。
 - launcher/dev-stack 用 `DSH_STATION_THEME_FILE` 传绝对路径。插件原子写 `dsh-theme.json`，
   严格只有 `{version:1,preference:light|dark|system}`，最多1024 UTF-8字节；不携带原生配置、URL或凭据。
 - relay 只读项目投影，以目录 `fs.watch` 覆盖原子替换，去重后通知管理页；坏文件/缺失保持进程内上次有效值，首次为system。
@@ -384,10 +384,12 @@ token 拼写和实际值是两件事，需用真实页面 getComputedStyle 检�
 ### 原生设置面板与桌面顶部留白
 
 出处：`packages/client/ui-settings-general/src/client/SettingsRoot.module.css`；已对照
-0.1.7-rc.2 的 `@deepseek-ai/dsh-client-ui-settings-general/lib/client.js`（本地源码 checkout 与适配基线不同）。
-设置 overlay 为 fixed/inset:0 的居中 flex；面板高度为
-`min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-top-clearance,24px))))`，
-外部留白来自视口高度限制和居中，不是标题/header 的 padding。
+0.2.0-rc.2 源码核对本节公式。
+设置 overlay 为 fixed 的居中 flex；面板高度为
+`min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-overlay-top,24px))))`
+（`--dsh-frame-overlay-top` 由 `packages/client/ui-layout/src/client/AppFrame.module.css` 发布：
+桌面为 `--dsh-frame-top-clearance + 20px`，浏览器为 20px）；全屏 mask 顶部让出标题栏
+（`inset: var(--dsh-frame-chrome-top,0px) 0 0`）。外部留白来自视口高度限制和居中，不是标题/header 的 padding。
 项目 relay 管理页是顶部对齐的独立文档，不应复制整套 modal：其 `--dsh-station-page-top-gap`
 保留24px（窄屏12px）页面留白；桌面 `chromebar.go` 将36px标题栏占位与该值叠加，不能覆盖它。
 dsh 文档未定义该项目变量，沿用36px占位和border-box，不改变原生设置样式。

@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | **English**
 
-Bundled dsh: `0.1.7-rc.2` (next channel, developer preview)
+Bundled dsh: `0.2.0-rc.2` (next channel, developer preview)
 
 A complete workstation for the official DeepSeek Harness (dsh). The desktop app bundles dsh and works out of the box; remote access is built in but optional, off by default — enable it when you want it.
 
@@ -259,7 +259,7 @@ The desktop workstation, the tunnel, authentication, release media (four desktop
 
 | Item | Value |
 |---|---|
-| dsh version | `0.1.7-rc.2` (next channel, developer preview, **breaking changes expected**) |
+| dsh version | `0.2.0-rc.2` (next channel, developer preview, **breaking changes expected**) |
 | dsh Node requirement | `^22.19.0 \|\| >=24.0.0` |
 | Runtime policy | the Linux server zip and desktop lite editions use the system Node; desktop full editions bundle a pinned Node (verified against official SHA-256) |
 | Native modules | zero in our own code (scrypt from Node core); dsh ships prebuilt per-platform binaries, hence per-platform packages |

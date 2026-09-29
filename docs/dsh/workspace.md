@@ -109,7 +109,7 @@ USER_GLOBAL_FILE 定义在内部 render.ts，不在公开入口，插件只能�
 ### 原生图片缩放与项目增强
 
 出处：`packages/client/ui-sidebar-documentpreview/src/client/{zoom/ZoomViewport.tsx,zoom/ZoomControls.tsx,image/ImageBody.tsx,image/ImageBody.module.css}`、
-`src/client/document/contract.ts`（`src/client` 均属于同包）；已安装 `0.1.7-rc.2` 的 `lib/client.js`
+`src/client/document/contract.ts`（`src/client` 均属于同包）；已安装 `0.2.0-rc.2` 的 `lib/client.js`
 包含 `ZoomViewport` / `ImageBody`。项目实现见 `packages/plugins/files/src/client/imageZoomOverlay.tsx`、`imagePan.ts`。
 
 - 原生 `ImageBody` 使用共享 `ZoomViewport`，每个 tab 单独保存缩放偏好，默认「适应宽度」（仅缩小宽于视口的图片）；

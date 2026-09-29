@@ -2,7 +2,7 @@
 
 **简体中文** | [English](README.en.md)
 
-当前内置 dsh：`0.1.7-rc.2`（next 通道，developer preview）
+当前内置 dsh：`0.2.0-rc.2`（next 通道，developer preview）
 
 官方 DeepSeek Harness（dsh）的完整工作站。桌面应用自带 dsh，装好就能用；远程访问是内置的可选功能，默认不开，需要时再启用。
 
@@ -258,7 +258,7 @@ pnpm start     # 运行已有 dist 产物；先确保上述开发介质和运行
 
 | 项 | 值 |
 |---|---|
-| dsh 版本 | `0.1.7-rc.2`（next 通道，developer preview，**会有破坏性变更**） |
+| dsh 版本 | `0.2.0-rc.2`（next 通道，developer preview，**会有破坏性变更**） |
 | dsh 要求 Node | `^22.19.0 \|\| >=24.0.0` |
 | 运行时策略 | Linux 服务版 zip 与桌面轻量版（lite）使用系统 Node；桌面完整版（full）随包附带固定版本 Node（含官方 SHA-256 校验） |
 | 原生模块 | 自身零原生模块（口令哈希用 Node 内置 scrypt）；dsh 自带按平台安装的二进制，所以发行包分平台 |

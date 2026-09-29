@@ -20,12 +20,12 @@
     "@dsh-station/protocol": "workspace:*",
     "commander": "15.0.0",
     "pino": "10.3.1",
-    "ws": "8.21.3",
+    "ws": "8.22.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@dsh-station/relay": "workspace:*",
-    "@types/ws": "8.18.1",
+    "@types/ws": "8.18.2",
     "vitest": "4.1.11"
   }
 }

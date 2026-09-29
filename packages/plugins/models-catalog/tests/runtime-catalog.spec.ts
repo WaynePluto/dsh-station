@@ -76,7 +76,7 @@ describe('runtime pi-ai catalog', () => {
   })
 
   it('refreshes an owned runtime model with its matching protocol and compat', () => {
-    const id = 'grok-4.7'
+    const id = 'grok-4.8'
     const spec = { route: ROUTE, id, name: id, api: 'openai-completions' }
     IDS.push(id)
     expect(ensureRuntimeModel(spec)).toBe(true)
