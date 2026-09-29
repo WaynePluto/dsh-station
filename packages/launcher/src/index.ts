@@ -337,6 +337,7 @@ export async function run(argv: readonly string[]): Promise<number> {
         profileCreated: bootstrap === 'created',
         packageManager: { command: process.execPath, args: [pnpmCli], version: resolvePnpmVersion(pnpmCli) },
         onOutput: text => process.stdout.write(text),
+        onTiming: ({ phase, durationMs }) => say(`插件准备耗时 [${phase}]: ${Math.round(durationMs)}ms`),
       })
       say(`插件介质：${mediaDirectory}`)
       if (pluginSync.migrated) say('已把旧受管 Bundle 迁移为可卸载的第三方插件。')

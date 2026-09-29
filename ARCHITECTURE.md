@@ -95,6 +95,7 @@ graph TD
 
 - connector 的 `connector.ts` 管重连/membership 状态；`control.ts` 管单次认证/心跳；`stream.ts` 管字节搬运。
 - launcher 的 `profile.ts` 初始化基础 profile，`plugin-catalog.ts` / `plugin-lifecycle.ts` 管第三方插件分发，`dsh-plugins.ts` 只管壳级 overlay；`dsh.ts`/`relay.ts`/`connector.ts` 生成各自启动参数。
+- `plugin-copy.ts` 只负责介质真实文件复制：惰性遍历、最多8路文件操作、错误后排空在途任务；不参与插件安装/选择。`plugin-lifecycle.ts` 先写pending标记，完成复制、官方安装和状态提交后才清除，失败保留旧offered/停用/卸载选择；固定阶段计时由launcher日志消费。
 - `supervisor.ts` 管子进程、输出及停止；`jwt-secret.ts` 和 `membership.ts` 只处理对应本地配置。
 - `remote-ready.ts` 串行请求既有 loopback 首页，按 200/303 确认 relay → connector → dsh 就绪；不读取正文或跟随 token 重定向，20 秒超时，随 shutdown 取消。
 - `remote-lifecycle.ts` 管桌面远程启用/停止/重启：按 connector→relay 停止，成功回到 idle 或直接重新启用；不重启 dsh、不修改 membership。失败只清理本次远程子进程，保留 dsh；ready 后的致命退出交回 supervisor 整套停机。remoteState/remoteError 与本机阶段分开上报，探测代次与取消保护防止旧任务复活子进程。
@@ -105,6 +106,7 @@ graph TD
 ### 桌面预览与后台所有权
 
 - 默认发行桌面与 `dev:desktop` 共用 `backendManager` 托管 launcher，默认只起 dsh。开发通过 `--dev-root` 运行 `scripts/dev-desktop-backend.mjs`：准备 runtime、复用 `dev-plugin-build.mjs` 指纹缓存，再启动同一构建产物；只桥接状态/控制，不复制进程编排。开发 home、端口与单实例独立。显式 `--attach` 才附着外部完整栈，不接管或启用它。
+- 开发准备在独立可取消的子进程中直接调用 `dev-runtime.mjs` 的 `ensureDevelopmentRuntime()`，不再启动第二层runtime进程；runtime模块导入无副作用，CLI入口保留。根manifest/workspace/lock每次按完整原始字节摘要核对成功校验缓存，变化才重新解析YAML；运行时依赖指纹、产物检测、先准备后加载local-config的顺序不变。
 - `remote_control.go` 通过 stdin 发送远程启停命令并保留应答；停止/重启收到 stopping 后才接受终态，避免旧 ready 提前解锁菜单。`navigation.go` 以事件订阅等待结果（启用/停止25秒，重启45秒）；关闭远程前经 `remote_navigation.go` 请求条件回退，只将精确relay来源的内置页面替换为已校验的dsh直连认证入口。停止后OnDomReady复核迟到导航，直连工作台与外部浏览器不强制切换，不增加Go绑定或HTTP控制接口。
 - `navigation.go` 统一托盘和标题栏管理动作：先创建/打开临时 loopback 能力加载页，再异步发送启用命令；`admin_loading.go` 只读状态，不提供启动 HTTP 接口或代理业务。Wails 仅放行无凭据配置握手中的 dsh/relay 精确 origin，加载页不获得 Go 绑定。
 - `startup_loading.go` 在受管模式让 AssetServer 立即 302 到能力保护的临时 loopback 文档，展示动画/阶段；与管理页共用 `admin_loading.go` 的安全/生命周期限制。`backend_events.go` 原子快照订阅驱动 `loading_stream.go` 的单次 NDJSON 流，`loading_client.go` 共用有界客户端解析；无定时查询。认证入口就绪即经固定 `/enter` 返回无正文 token 重定向，由原生加载页/工作台接管，不保留项目 overlay 或等待动画。状态不含 token，业务始终直连 dsh，加载服务不提前启动 relay。仅服务创建失败时使用资产故障页。显式 attach 仍持有 `/` 等 relay 后 302。壳在 WebView2 的 OnStartup 就绪时显示，不等首次导航完成。HTTP/WS、认证和插件资源均从真实 dsh/relay origin 加载，仅提供窗口控制与固定工作台/管理入口导航的无参 Go Bindings。桌面介质由 `scripts/pack-desktop.mjs` 在对应平台产出（win NSIS setup + 便携 zip、mac DMG + .app 便携 zip、linux deb + 便携 zip，统一入口 `scripts/release.mjs`），随包 Node 清单在 `packaging/desktop-node.json`。**没有原生网络/系统权限隔离（S1.3）**；参数校验只限定初始地址，风险及构建方式见 `packages/desktop/README.md`。

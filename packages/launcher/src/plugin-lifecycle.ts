@@ -8,11 +8,13 @@ import { isMap, isSeq, parseDocument } from 'yaml'
 import type { PluginDistribution } from './plugin-catalog.js'
 import { PLUGIN_DISTRIBUTIONS } from './plugin-catalog.js'
 import { LauncherError } from './errors.js'
+import { copyPluginTrees, type PluginCopyTree } from './plugin-copy.js'
 import { DSH_BASE_BUNDLE, DSH_WEB_APP_BUNDLE, profileDirectory } from './profile.js'
 
 const STATE_FILE = 'dsh-station-bundles-state.json'
 const PACKAGE_MANAGER_MIGRATION_DIRECTORY = '.dsh-station-package-manager-migration'
 const PROFILE_MEDIA_DIRECTORY = '.dsh-station-plugin-media'
+const MEDIA_PENDING_FILE = '.dsh-station-plugin-media.pending'
 const LEGACY_FILES = '@dsh-station/dsh-plugin-files'
 const SHARED_MODEL_CATALOG = '@earendil-works/pi-ai'
 const SHARED_HTTP_PROXY = '@deepseek-ai/dsh-http-proxy'
@@ -39,6 +41,13 @@ interface PackageManagerCommand {
   readonly args?: readonly string[]
   readonly version?: string
 }
+
+export interface PluginSyncTiming {
+  readonly phase: 'check' | 'plugin-copy' | 'dependency-resolve' | 'dependency-copy' | 'install' | 'state-write'
+  readonly durationMs: number
+}
+
+type TimingReporter = (timing: PluginSyncTiming) => void
 
 export interface PluginSyncResult {
   readonly installed: readonly string[]
@@ -201,12 +210,16 @@ function dshHttpProxy(installAnchor: string): string {
   return fs.realpathSync(dirname(proxy))
 }
 
-function copyRuntimeDependencyClosure(
+async function copyRuntimeDependencyClosure(
   sourceModules: string,
   targetModules: string,
   seeds: ReadonlySet<string>,
   installAnchor: string,
-): void {
+  onTiming: TimingReporter | undefined,
+): Promise<void> {
+  const started = performance.now()
+  const trees: PluginCopyTree[] = []
+  const links: { source: string, target: string }[] = []
   const pending = [...seeds]
   const copied = new Set<string>()
   while (pending.length > 0) {
@@ -223,7 +236,6 @@ function copyRuntimeDependencyClosure(
     if (existing) continue
     copied.add(manifest.name)
     const target = join(targetModules, ...manifest.name.split('/'))
-    fs.mkdirSync(dirname(target), { recursive: true })
     if (manifest.name === SHARED_MODEL_CATALOG) {
       const shared = dshModelCatalog(installAnchor)
       const sharedManifest = readJson(join(shared, 'package.json'))
@@ -231,23 +243,17 @@ function copyRuntimeDependencyClosure(
         throw new Error(`dsh 与模型插件使用的 pi-ai 版本不一致：${String(sharedManifest && isObject(sharedManifest) ? sharedManifest.version : '?')} / ${String(manifest.version)}`)
       }
       // Node 按真实路径缓存 ESM；复制目录即使版本相同也会产生互不可见的 model map。
-      fs.symlinkSync(shared, target, process.platform === 'win32' ? 'junction' : 'dir')
+      links.push({ source: shared, target })
     } else if (manifest.name === SHARED_HTTP_PROXY) {
       const shared = dshHttpProxy(installAnchor)
       const sharedManifest = readJson(join(shared, 'package.json'))
       if (!isObject(sharedManifest) || sharedManifest.version !== manifest.version) {
         throw new Error(`dsh 与代理插件使用的 http-proxy 版本不一致：${String(sharedManifest && isObject(sharedManifest) ? sharedManifest.version : '?')} / ${String(manifest.version)}`)
       }
-      fs.symlinkSync(shared, target, process.platform === 'win32' ? 'junction' : 'dir')
+      links.push({ source: shared, target })
     } else {
-      // pnpm 的 node_modules 条目可能是 junction/symlink；cpSync 默认按符号
-      // 链接复制会在目标处再次创建符号链接，进程没有符号链接特权时 EPERM。
-      // 先解析到真实目录再复制，媒体得到自包含的真实文件。
-      const realSource = fs.realpathSync(source)
-      fs.cpSync(realSource, target, {
-        recursive: true,
-        filter: path => path === realSource || basename(path) !== 'node_modules',
-      })
+      // 先解析 pnpm 的目录链接，普通依赖仍复制成自包含文件，不扩大共享范围。
+      trees.push({ source: fs.realpathSync(source), target, excludeNodeModules: true })
     }
     if (isObject(manifest.dependencies)) pending.push(...Object.keys(manifest.dependencies))
     if (isObject(manifest.optionalDependencies)) {
@@ -256,30 +262,41 @@ function copyRuntimeDependencyClosure(
       }
     }
   }
+  onTiming?.({ phase: 'dependency-resolve', durationMs: performance.now() - started })
+  const copyStarted = performance.now()
+  for (const link of links) {
+    fs.mkdirSync(dirname(link.target), { recursive: true })
+    fs.symlinkSync(link.source, link.target, process.platform === 'win32' ? 'junction' : 'dir')
+  }
+  await copyPluginTrees(trees)
+  onTiming?.({ phase: 'dependency-copy', durationMs: performance.now() - copyStarted })
 }
 
-function materializeProfileMedia(
+async function materializeProfileMedia(
   directory: string,
   media: readonly MediaEntry[],
   runtimeModulesDirectory: string | undefined,
   installAnchor: string,
-): readonly MediaEntry[] {
+  onTiming: TimingReporter | undefined,
+): Promise<readonly MediaEntry[]> {
+  const started = performance.now()
   const cache = join(directory, PROFILE_MEDIA_DIRECTORY)
   fs.mkdirSync(cache, { recursive: true })
   const result = media.map((entry) => {
     const target = join(cache, basename(entry.directory))
     // dsh 尚未启动，直接刷新缓存可避开 Windows 对含嵌套包目录 rename 的限制。
     fs.rmSync(target, { recursive: true, force: true })
-    fs.cpSync(entry.directory, target, { recursive: true })
     return { ...entry, directory: target }
   })
+  await copyPluginTrees(result.map((entry, index) => ({ source: (media[index] as MediaEntry).directory, target: entry.directory })))
+  onTiming?.({ phase: 'plugin-copy', durationMs: performance.now() - started })
   const dependencies = runtimeDependencyNames(result)
   if (dependencies.size > 0) {
     if (runtimeModulesDirectory === undefined) throw new Error('没有提供随包运行时依赖目录')
     const targetModules = join(cache, 'node_modules')
     fs.rmSync(targetModules, { recursive: true, force: true })
     fs.mkdirSync(targetModules, { recursive: true })
-    copyRuntimeDependencyClosure(runtimeModulesDirectory, targetModules, dependencies, installAnchor)
+    await copyRuntimeDependencyClosure(runtimeModulesDirectory, targetModules, dependencies, installAnchor, onTiming)
   }
   return result
 }
@@ -401,11 +418,14 @@ export async function synchronizePluginDistributions(options: {
   readonly profileCreated: boolean
   readonly packageManager?: PackageManagerCommand
   readonly onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
+  readonly onTiming?: TimingReporter
 }): Promise<PluginSyncResult> {
+  const started = performance.now()
   const directory = profileDirectory(options.home, options.profile)
   restorePackageManagerMigration(directory)
   const manifestPath = join(directory, 'package.json')
   const patchPath = join(directory, 'cordis.patch.yml')
+  const pendingPath = join(directory, MEDIA_PENDING_FILE)
   const sourceMedia = readMedia(options.mediaDirectory)
   if (sourceMedia.length !== PLUGIN_DISTRIBUTIONS.length
     || sourceMedia.some((entry, index) => !sameDistribution(PLUGIN_DISTRIBUTIONS[index] as PluginDistribution, entry))) {
@@ -421,9 +441,9 @@ export async function synchronizePluginDistributions(options: {
   const migrate = currentState === undefined && (legacyEnsured.size > 0 || hasLegacySelection)
 
   // 启动快路径：状态文件记录的版本与介质指纹一致、profile 依赖与链接完好时，
-  // 介质物化和 pnpm 升级检查（约 15 秒的复制 + 安装）都是无操作，直接跳过。
+  // 介质物化和 pnpm 安装无需重复执行，可直接跳过。
   // 任一条件不满足（新介质条目、版本或内容变化、链接缺失、迁移）走完整路径。
-  if (currentState !== undefined && !migrate && !options.profileCreated
+  if (currentState !== undefined && !migrate && !options.profileCreated && !fs.existsSync(pendingPath)
     && sourceMedia.every((entry) => {
       if (!currentState.offered.includes(entry.name)) return false
       if (!dependencies.has(entry.name)) return true
@@ -431,6 +451,7 @@ export async function synchronizePluginDistributions(options: {
       if (currentState.stamps?.[entry.name] !== directoryStamp(entry.directory)) return false
       return fs.existsSync(join(directory, 'node_modules', ...entry.name.split('/'), 'package.json'))
     })) {
+    options.onTiming?.({ phase: 'check', durationMs: performance.now() - started })
     return {
       installed: [],
       upgraded: [],
@@ -441,8 +462,11 @@ export async function synchronizePluginDistributions(options: {
     }
   }
 
+  options.onTiming?.({ phase: 'check', durationMs: performance.now() - started })
+  // 保留旧 offered 状态；中断标记阻止半成品在下次启动误入快路径。
+  writeTextAtomically(pendingPath, 'pending\n')
   // profile 可能与安装介质分处不同 Windows 盘符；先复制到同盘缓存再交给 pnpm 建 link。
-  const media = materializeProfileMedia(directory, sourceMedia, options.runtimeModulesDirectory, options.installAnchor)
+  const media = await materializeProfileMedia(directory, sourceMedia, options.runtimeModulesDirectory, options.installAnchor, options.onTiming)
   const offered = new Set(currentState?.offered ?? [])
   const install: MediaEntry[] = []
   const enabled = new Set<string>()
@@ -493,6 +517,7 @@ export async function synchronizePluginDistributions(options: {
     )
   }
   if (install.length > 0) {
+    const installStarted = performance.now()
     const result = await runPluginCommand({
       profile: options.profile,
       dir: directory,
@@ -511,6 +536,7 @@ export async function synchronizePluginDistributions(options: {
       throw new Error(`安装或升级随附插件失败：${result.output || result.logPath}`)
     }
     migration?.commit()
+    options.onTiming?.({ phase: 'install', durationMs: performance.now() - installStarted })
   }
 
   if (migrate) {
@@ -537,6 +563,7 @@ export async function synchronizePluginDistributions(options: {
     preserveDisabledRows(patchPath, disabledRows)
   }
 
+  const stateStarted = performance.now()
   const after = profileManifest(manifestPath)
   after.dsh.profile.bundles = insertDistributions(after.dsh.profile.bundles, enabled)
   writeTextAtomically(manifestPath, `${JSON.stringify(after, undefined, 2)}\n`)
@@ -552,6 +579,8 @@ export async function synchronizePluginDistributions(options: {
     versions,
     stamps,
   } satisfies LifecycleState, undefined, 2)}\n`)
+  fs.rmSync(pendingPath)
+  options.onTiming?.({ phase: 'state-write', durationMs: performance.now() - stateStarted })
 
   return {
     installed: install.filter(entry => !installedBefore.has(entry.name)).map(entry => entry.name),

@@ -88,7 +88,7 @@ describe('development preparation', () => {
     const state = write(local.DSH_HOME_DEV, 'profiles/dsh-station-web/package.json', '{"userChoice":"removed"}')
     const calls: string[] = []
     const prepared = await prepareDesktopBackend({ root,
-      run: async () => { calls.push('runtime'); write(root, '.dev/runtime.json', JSON.stringify(descriptor)) },
+      prepareRuntime: async () => { calls.push('runtime'); write(root, '.dev/runtime.json', JSON.stringify(descriptor)) },
       loadLocalConfig: async () => { calls.push('config'); expect(calls[0]).toBe('runtime'); return local },
       buildPlugins: async () => { calls.push('plugins') },
       buildBackend: async () => { calls.push('backend') },
@@ -104,7 +104,7 @@ describe('development preparation', () => {
 
   it('stops immediately if runtime preparation fails', async () => {
     const loadLocalConfig = vi.fn()
-    await expect(prepareDesktopBackend({ root: directory(), run: () => { throw new Error('runtime failed') }, loadLocalConfig }))
+    await expect(prepareDesktopBackend({ root: directory(), prepareRuntime: () => { throw new Error('runtime failed') }, loadLocalConfig }))
       .rejects.toThrow('runtime failed')
     expect(loadLocalConfig).not.toHaveBeenCalled()
   })

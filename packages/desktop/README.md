@@ -160,6 +160,26 @@ OpenHome/OpenAdmin/OpenExternalHome/OpenExternalAdmin 八个无参方法，管�
   远程服务项只显示「由开发栈管理」。外部栈由启动它的终端管理，不由壳接管。
   默认 dev:desktop 不再走此分支。
 
+首次插件准备使用有界的 8 路文件复制，后续未变化的启动仍走原快路径。复制或安装中断后，下次启动
+会重新准备，不把半成品当成成功，也不补回用户已经卸载的插件。无需手动删除标准 `DSH_HOME`。
+开发版额外复用运行时配置的成功校验摘要；每次仍重读根清单、workspace 与 lockfile 的完整字节，
+变化即重新校验，缺失产物仍重建。runtime 准备合并到现有可取消的准备子进程，不影响停止/失败回收。
+本轮仅加速开发入口，发行版沿用第一轮实现；数据见 [开发准备优化](../../docs/reference/startup-development-optimization.md)。
+
+后台日志的 `插件准备耗时 [阶段]: Nms` 仅表示对应阶段完成：
+
+| 阶段 | 内容 |
+|---|---|
+| `check` | 介质、版本、指纹与快路径检查 |
+| `plugin-copy` | 插件本体与组合包组件复制 |
+| `dependency-resolve` | 运行时依赖闭包与共享模块定位 |
+| `dependency-copy` | 依赖文件复制与既有共享链接建立 |
+| `install` | 官方插件管理器安装/升级调用 |
+| `state-write` | 选择/指纹状态提交与中断标记清理 |
+
+缓存命中时只输出 `check`；失败的阶段不会输出完成计时。这些日志不是 dsh 内部插件加载进度，
+不改变加载页文案或 ready 判断。Windows 对照结果见 [首次准备优化](../../docs/reference/startup-copy-optimization.md)。
+
 进入 relay 后，本机 loopback 启动 splash 保留 HARNESS 字标、24px 转圈和三元素布局。
 转圈固定弧长、1 秒匀速循环，不模拟进度；CSP 哈希限定的固定脚本串行探测当前同源 URL，
 每次完成后等待 200ms，单次请求最多 3 秒，等待期间不重载文档。探测不跟随或读取 token

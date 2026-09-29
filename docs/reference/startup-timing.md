@@ -3,6 +3,11 @@
 本页记录 2026-09-28 的实测与现行实现。启动/远程管理加载页已改为单次 HTTP 状态流，
 项目加载页仅兜底后台等待；认证入口就绪后立即交给 dsh 原生页面，不等动画或客户端插件加载完成。
 
+2026-09-29 的原样开发桌面/Windows lite 便携版耗时对照见 [Node 24.19.0 基准](startup-benchmark-node24.md)；
+该基准仅精确记录窗口与后台时点，未复测本页的浏览器首绘时间。
+首次插件准备的实现优化与前后对照见 [有界复制优化](startup-copy-optimization.md)。
+后续开发缓存启动与插件归因见 [第二轮优化](startup-development-optimization.md)。
+
 ## 原生 Loading plugins 为什么可能看不见
 
 ### 实测方法

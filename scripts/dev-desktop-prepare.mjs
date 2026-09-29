@@ -7,6 +7,8 @@ import {
   ensurePluginBuild, fileStamp, packageBuildStamp, readBuildStamp, writeBuildStamp,
 } from './dev-plugin-build.mjs'
 
+import { ensureDevelopmentRuntime } from './dev-runtime.mjs'
+
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const BACKEND_PACKAGES = ['launcher', 'relay', 'connector', 'protocol', 'plugin-ui']
 const BACKEND_ARTIFACTS = ['launcher/dist/index.js', 'relay/dist/cli.js', 'relay/dist/index.js',
@@ -52,12 +54,13 @@ export function developmentLauncherConfig(local) {
 export async function prepareDesktopBackend({
   root = ROOT,
   run = runNode,
+  prepareRuntime = ensureDevelopmentRuntime,
   loadLocalConfig = () => import('./local-config.mjs'),
   buildPlugins = ensurePluginBuild,
   buildBackend = ensureBackendBuild,
 } = {}) {
   // 不静态导入 local-config：它在求值时读取 runtime.json，必须晚于本次准备。
-  await run([join(root, 'scripts', 'dev-runtime.mjs')], root)
+  await prepareRuntime({ root, run })
   const local = await loadLocalConfig()
   const descriptor = JSON.parse(readFileSync(join(root, '.dev', 'runtime.json'), 'utf8'))
   if (descriptor.dshBin !== local.DSH_BIN || descriptor.installAnchor !== local.DSH_INSTALL_ANCHOR

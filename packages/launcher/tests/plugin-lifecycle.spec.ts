@@ -33,6 +33,7 @@ const roots: string[] = []
 
 afterEach(() => {
   runPluginCommand.mockClear()
+  vi.restoreAllMocks()
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -382,6 +383,100 @@ describe('third-party plugin lifecycle', () => {
     expect(result.upgraded).toContain(first.name)
     expect(fs.readFileSync(join(profileDirectory(home, 'dsh-station-web'), '.dsh-station-plugin-media',
       pluginDirectory.slice(media.length + 1), 'dist', 'index.js'), 'utf8')).toBe('export const rebuilt = true\n')
+  })
+
+  it('reports only completed fixed timing phases and measures the unchanged fast path separately', async () => {
+    const { home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    const onTiming = vi.fn()
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename, onTiming }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    expect(onTiming.mock.calls.map(([timing]) => timing.phase)).toEqual(['check', 'plugin-copy', 'install', 'state-write'])
+    for (const [timing] of onTiming.mock.calls) {
+      expect(Object.keys(timing).toSorted()).toEqual(['durationMs', 'phase'])
+      expect(Number.isFinite(timing.durationMs)).toBe(true)
+      expect(timing.durationMs).toBeGreaterThanOrEqual(0)
+    }
+    const directory = profileDirectory(home, 'dsh-station-web')
+    for (const item of PLUGIN_DISTRIBUTIONS) {
+      const target = join(directory, 'node_modules', ...item.name.split('/'))
+      fs.mkdirSync(target, { recursive: true })
+      fs.writeFileSync(join(target, 'package.json'), '{}')
+    }
+    onTiming.mockClear()
+    runPluginCommand.mockClear()
+    await synchronizePluginDistributions({ ...options, profileCreated: false })
+    expect(onTiming.mock.calls.map(([timing]) => timing.phase)).toEqual(['check'])
+    expect(runPluginCommand).not.toHaveBeenCalled()
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(false)
+  })
+
+  it('retries incomplete same-version dependency copies without losing disabled or removed choices', async () => {
+    const { root, home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    const plugin = join(media, PLUGIN_DISTRIBUTIONS[0]!.name.split('/').at(-1)!.replace(/^dsh-plugin-/u, ''), 'package.json')
+    const sourceManifest = JSON.parse(fs.readFileSync(plugin, 'utf8')) as Record<string, unknown>
+    sourceManifest.dependencies = { 'runtime-entry': '1.0.0' }
+    fs.writeFileSync(plugin, JSON.stringify(sourceManifest))
+    const runtimeModules = join(root, 'runtime', 'node_modules')
+    fs.mkdirSync(join(runtimeModules, 'runtime-entry'), { recursive: true })
+    fs.writeFileSync(join(runtimeModules, 'runtime-entry', 'package.json'), JSON.stringify({ name: 'runtime-entry', version: '1.0.0' }))
+    fs.writeFileSync(join(runtimeModules, 'runtime-entry', 'index.js'), 'complete runtime')
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename,
+      runtimeModulesDirectory: runtimeModules }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    const directory = profileDirectory(home, 'dsh-station-web')
+    const statePath = join(directory, 'dsh-station-bundles-state.json')
+    const stateBefore = fs.readFileSync(statePath, 'utf8')
+    const disabled = PLUGIN_DISTRIBUTIONS[1]!.name
+    const removed = PLUGIN_DISTRIBUTIONS[7]!.name
+    const manifest = readManifest(home)
+    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(name => name !== disabled && name !== removed)
+    delete manifest.dependencies[removed]
+    fs.writeFileSync(join(directory, 'package.json'), JSON.stringify(manifest))
+    const onTiming = vi.fn()
+    const original = new Error('dependency copy failed')
+    const copyFile = fs.promises.copyFile
+    const copy = vi.spyOn(fs.promises, 'copyFile').mockImplementation(async (...args) => {
+      if (args[0] === join(runtimeModules, 'runtime-entry', 'index.js')) throw original
+      await copyFile(...args)
+    })
+    runPluginCommand.mockClear()
+    await expect(synchronizePluginDistributions({ ...options, profileCreated: false, onTiming })).rejects.toBe(original)
+    expect(runPluginCommand).not.toHaveBeenCalled()
+    expect(onTiming.mock.calls.map(([timing]) => timing.phase)).not.toContain('dependency-copy')
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(true)
+    expect(fs.readFileSync(statePath, 'utf8')).toBe(stateBefore)
+    expect(readManifest(home)).toEqual(manifest)
+    copy.mockRestore()
+    // 模拟重建 package.json 后链接又可达：中断标记仍必须阻止半成品走快路径。
+    for (const name of Object.keys(manifest.dependencies)) {
+      const target = join(directory, 'node_modules', ...name.split('/'))
+      fs.mkdirSync(target, { recursive: true })
+      fs.writeFileSync(join(target, 'package.json'), '{}')
+    }
+    const recovered = await synchronizePluginDistributions({ ...options, profileCreated: false })
+    expect(runPluginCommand).toHaveBeenCalledTimes(1)
+    expect(recovered.skippedRemoved).toContain(removed)
+    expect(readManifest(home).dependencies[removed]).toBeUndefined()
+    expect(readManifest(home).dsh.profile.bundles).not.toContain(disabled)
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(false)
+    expect(fs.readFileSync(join(directory, '.dsh-station-plugin-media', 'node_modules', 'runtime-entry', 'index.js'), 'utf8'))
+      .toBe('complete runtime')
+  })
+
+  it('keeps interrupted installation marked until a complete retry succeeds', async () => {
+    const { home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename }
+    runPluginCommand.mockImplementationOnce(async () => ({ exitCode: 1, output: 'install failed', truncated: false, logPath: 'mock.log' }))
+    await expect(synchronizePluginDistributions({ ...options, profileCreated: true })).rejects.toThrow('install failed')
+    const directory = profileDirectory(home, 'dsh-station-web')
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(true)
+    expect(fs.existsSync(join(directory, 'dsh-station-bundles-state.json'))).toBe(false)
+    await synchronizePluginDistributions({ ...options, profileCreated: false })
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(false)
+    expect(readManifest(home).dsh.profile.bundles).toEqual([...BASE_PROFILE_BUNDLES, ...PLUGIN_DISTRIBUTIONS.map(item => item.name)])
   })
 
   it('migrates legacy bundles and preserves component and files removal choices', async () => {

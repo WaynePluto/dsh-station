@@ -23,6 +23,12 @@ profile 的 `dependencies` 是第三方 Bundle 是否安装的事实，`dsh.prof
 重写 `.dev/plugins` 的同版本变化，因此开发栈不再需要强制刷新参数；旧状态文件没有指纹，
 升级后第一次运行会走一次完整路径补齐。
 
+项目介质物化由 `packages/launcher/src/plugin-copy.ts` 以最多 8 路文件操作复制，普通依赖仍是
+真实文件；仅 pi-ai/http-proxy 保持原有共享模块链接，不改变安装布局或依赖版本。
+失败后停止派发并等待在途写入结束；profile 根的 `.dsh-station-plugin-media.pending` 在修改缓存前写入，
+复制、官方安装和状态提交全部成功才移除。标记存在时禁止快路径，但保留旧 offered/停用/卸载状态，
+避免重试自动补回用户已卸载的包。完成阶段耗时仅输出到 launcher 日志，不进入加载页状态协议。
+
 profile patch 执行时，末尾 overlay 插入的行还不存在，所以覆盖普通项目插件 config 需要更靠后的 patch，
 且目标行必须有稳定 id。用户可编辑的插件字段通过带 volatile Config 的插件行和 configForms 写入；
 其他设置仍按其所属服务的契约处理。
