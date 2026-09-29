@@ -1,6 +1,6 @@
 import { createServer, type Server, type RequestListener } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { REMOTE_READY_TIMEOUT_MS, waitForRemote } from '../src/remote-ready.js'
+import { REMOTE_READY_TIMEOUT_MS, probeRemote, waitForRemote } from '../src/remote-ready.js'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -54,18 +54,33 @@ describe('remote readiness', () => {
     expect(requests).toEqual([{ url: '/', cookie: undefined, host: `127.0.0.1:${String(port)}` }])
   })
 
+  // 高负载下探测的墙钟定时器可能先于响应事件执行，最终失败消息会在具体
+  // 状态与「首页请求超时」之间抖动；因此不断言消息，改为观察服务端命中后
+  // 主动取消。若该状态被误判为就绪，promise 会提前 resolve 而非以
+  // AbortError 拒绝，断言随之失败。
   it.each([302, 401, 403, 404, 500, 502, 503])('does not call HTTP %i ready', async (status) => {
-    const port = await listen((_req, res) => res.writeHead(status, { location: '/?token=secret' }).end())
-    await expect(waitForRemote({ port, signal: new AbortController().signal, timeoutMs: 200, intervalMs: 500 }))
-      .rejects.toThrow(`HTTP ${String(status)}`)
+    let hits = 0
+    const port = await listen((_req, res) => {
+      hits += 1
+      res.writeHead(status, { location: '/?token=secret' }).end()
+    })
+    const abort = new AbortController()
+    const result = waitForRemote({ port, signal: abort.signal, intervalMs: 5 })
+    const assertion = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(hits).toBeGreaterThanOrEqual(2), { timeout: 10_000 })
+    abort.abort()
+    await assertion
   })
 
   it('reports connection failure rather than accepting a listening TCP socket', async () => {
-    const port = await listen(req => req.socket.destroy())
-    // 事件循环被拖住时，探测的墙钟定时器先于对端 RST 的错误事件执行，
-    // 最后结果会在 ECONNRESET 与首页请求超时之间抖动；
-    // 确定性不变量只有「绝不就绪、重试到 deadline」。
-    await expect(wait(port, undefined, 150)).rejects.toThrow('未就绪')
+    let attempts = 0
+    const port = await listen(req => { attempts += 1; req.socket.destroy() })
+    const abort = new AbortController()
+    const result = waitForRemote({ port, signal: abort.signal, intervalMs: 5 })
+    const assertion = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(attempts).toBeGreaterThanOrEqual(2), { timeout: 10_000 })
+    abort.abort()
+    await assertion
   })
 
   it('bounds each stalled request and retries before the overall timeout', async () => {
@@ -80,7 +95,8 @@ describe('remote readiness', () => {
     const start = performance.now()
     await expect(waitForRemote({ port, signal: new AbortController().signal, timeoutMs: 100, requestTimeoutMs: 5_000 }))
       .rejects.toThrow('首页请求超时')
-    expect(performance.now() - start).toBeLessThan(1_000)
+    // 上限留足调度余量，仍远小于 5 秒的单请求超时，足以证明总预算收紧了最后一次探测。
+    expect(performance.now() - start).toBeLessThan(4_000)
   })
 
   it('does not consume or wait for the homepage response body', async () => {
@@ -129,5 +145,25 @@ describe('remote readiness', () => {
     abort.abort()
     await expect(wait(port, abort.signal)).rejects.toMatchObject({ name: 'AbortError' })
     expect(attempts).toBe(0)
+  })
+})
+
+describe('remote probe', () => {
+  const signal = new AbortController().signal
+
+  // 单请求层的失败归类是纯 I/O 结果：响应在亚毫秒到达，5 秒探测上限下
+  // 不受调度抖动影响，可以确定地断言。
+  it('treats only homepage 200 and token 303 as ready', async () => {
+    const home = await listen((_req, res) => { res.writeHead(200).end() })
+    const redirect = await listen((_req, res) => { res.writeHead(303, { location: '/?token=x' }).end() })
+    const unavailable = await listen((_req, res) => { res.writeHead(503).end() })
+    await expect(probeRemote(home, 5_000, signal)).resolves.toBeUndefined()
+    await expect(probeRemote(redirect, 5_000, signal)).resolves.toBeUndefined()
+    await expect(probeRemote(unavailable, 5_000, signal)).resolves.toBe('HTTP 503')
+  })
+
+  it('reports connection resets with the errno code', async () => {
+    const port = await listen(req => req.socket.destroy())
+    await expect(probeRemote(port, 5_000, signal)).resolves.toBe('请求失败（ECONNRESET）')
   })
 })

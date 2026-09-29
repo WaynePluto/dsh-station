@@ -5,8 +5,8 @@ export const REMOTE_READY_TIMEOUT_MS = 20_000
 const REQUEST_TIMEOUT_MS = 1_000
 const RETRY_INTERVAL_MS = 250
 
-/** 只检查现有首页的响应头，不读取正文、Location 或交换 token。 */
-function probe(port: number, timeoutMs: number, signal: AbortSignal): Promise<string | undefined> {
+/** 只检查现有首页的响应头，不读取正文、Location 或交换 token。导出以直接单测失败归类。 */
+export function probeRemote(port: number, timeoutMs: number, signal: AbortSignal): Promise<string | undefined> {
   return new Promise((resolvePromise, reject) => {
     const req = request({
       hostname: '127.0.0.1',
@@ -56,7 +56,7 @@ export async function waitForRemote(options: {
       throw new Error(`本机 relay → connector → dsh 在 ${String(timeoutMs / 1000)} 秒内未就绪；最后结果：${lastFailure}`)
     }
     // eslint-disable-next-line no-await-in-loop -- 串行探测，上一请求完成后才重试。
-    const failure = await probe(options.port, Math.min(requestTimeoutMs, remaining), options.signal)
+    const failure = await probeRemote(options.port, Math.min(requestTimeoutMs, remaining), options.signal)
     options.signal.throwIfAborted()
     if (failure === undefined && performance.now() < deadline) return
     lastFailure = failure ?? '首页响应超过就绪时限'
