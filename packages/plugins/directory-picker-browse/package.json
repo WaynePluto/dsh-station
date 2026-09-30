@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-directory-picker-browse",
-  "version": "0.0.2-20260928",
+  "version": "0.0.2",
   "description": "让远程浏览器使用 dsh 网页目录选择器创建工作区。",
   "license": "MIT",
   "private": true,

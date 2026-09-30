@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-browser-compat",
-  "version": "0.0.2-20260928",
+  "version": "0.0.2",
   "description": "为旧版 WebKit 补齐 dsh 所需浏览器 API，并提供浏览器日志。",
   "license": "MIT",
   "private": true,
@@ -26,7 +26,7 @@
     "locale"
   ],
   "dependencies": {
-    "@dsh-station/plugin-ui": "workspace:0.0.2-20260928"
+    "@dsh-station/plugin-ui": "workspace:0.0.2"
   },
   "scripts": {
     "build": "tsdown",

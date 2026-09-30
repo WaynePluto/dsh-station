@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-conversation-enhancements",
-  "version": "0.0.2-20260928",
+  "version": "0.0.2",
   "description": "整合失败重试、聊天滚动、消息分叉与通知的会话增强 Bundle。",
   "license": "MIT",
   "private": true,
@@ -15,10 +15,10 @@
     "locale"
   ],
   "dependencies": {
-    "@dsh-station/dsh-plugin-turn-retry": "workspace:0.0.2-20260928",
-    "@dsh-station/dsh-plugin-chat-scroll": "workspace:0.0.2-20260928",
-    "@dsh-station/dsh-plugin-user-message-fork": "workspace:0.0.2-20260928",
-    "@dsh-station/dsh-plugin-notify": "workspace:0.0.2-20260928"
+    "@dsh-station/dsh-plugin-turn-retry": "workspace:0.0.2",
+    "@dsh-station/dsh-plugin-chat-scroll": "workspace:0.0.2",
+    "@dsh-station/dsh-plugin-user-message-fork": "workspace:0.0.2",
+    "@dsh-station/dsh-plugin-notify": "workspace:0.0.2"
   },
   "exports": {
     "./package.json": "./package.json",

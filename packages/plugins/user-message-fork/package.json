@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-user-message-fork",
-  "version": "0.0.2-20260928",
+  "version": "0.0.2",
   "description": "从指定用户消息前的历史创建可编辑的新会话分支。",
   "license": "MIT",
   "private": true,

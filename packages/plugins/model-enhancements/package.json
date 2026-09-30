@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-model-enhancements",
-  "version": "0.0.2-20260928",
+  "version": "0.0.2",
   "description": "整合 Copilot 登录、模型目录、模型能力与常用模型的模型增强 Bundle。",
   "license": "MIT",
   "private": true,
@@ -15,10 +15,10 @@
     "locale"
   ],
   "dependencies": {
-    "@dsh-station/dsh-plugin-copilot-auth": "workspace:0.0.2-20260928",
-    "@dsh-station/dsh-plugin-models-catalog": "workspace:0.0.2-20260928",
-    "@dsh-station/dsh-plugin-model-capabilities": "workspace:0.0.2-20260928",
-    "@dsh-station/dsh-plugin-favorite-models": "workspace:0.0.2-20260928"
+    "@dsh-station/dsh-plugin-copilot-auth": "workspace:0.0.2",
+    "@dsh-station/dsh-plugin-models-catalog": "workspace:0.0.2",
+    "@dsh-station/dsh-plugin-model-capabilities": "workspace:0.0.2",
+    "@dsh-station/dsh-plugin-favorite-models": "workspace:0.0.2"
   },
   "exports": {
     "./package.json": "./package.json",

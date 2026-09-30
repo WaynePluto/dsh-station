@@ -1,6 +1,6 @@
 {
   "name": "@dsh-station/dsh-plugin-copilot-auth",
-  "version": "0.0.2-20260928",
+  "version": "0.0.2",
   "description": "在 dsh 模型设置中提供 GitHub Copilot 设备码登录与凭据同步。",
   "license": "MIT",
   "private": true,
