@@ -146,6 +146,42 @@ func TestStartupStateFailsClosed(t *testing.T) {
 	}
 }
 
+func TestStartupPluginStageLabels(t *testing.T) {
+	cases := []struct {
+		stage string
+		want  string
+	}{
+		{"", "正在准备插件…"},
+		{"copy", "正在复制插件文件…"},
+		{"deps", "正在准备插件依赖…"},
+		{"install", "正在安装插件…"},
+		{"unknown-stage", "正在准备插件…"},
+	}
+	for _, item := range cases {
+		status := backendStatus{Phase: phasePlugins, PluginStage: item.stage}
+		got := startupLoadingState(status, false)
+		if got.State != "starting" || got.Phase != item.want {
+			t.Fatalf("plugins+%q 文案错误: got %q want %q", item.stage, got.Phase, item.want)
+		}
+		if !strings.Contains(startupLoadingScript, "'"+item.want+"'") {
+			t.Fatalf("加载页脚本的 labels 数组缺少文案 %q", item.want)
+		}
+	}
+	// 子步骤标记只属于 plugins 阶段；其他阶段携带时沿用阶段默认文案。
+	dsh := backendStatus{Phase: phaseDsh, PluginStage: "install"}
+	if got := startupLoadingState(dsh, false); got.Phase != "正在启动 dsh…" {
+		t.Fatalf("非 plugins 阶段不得使用插件子步骤文案: %q", got.Phase)
+	}
+	// 所有阶段的固定文案都必须出现在加载页脚本的 labels 数组里，
+	// 否则浏览器端会静默回退到第一项文案。
+	for _, phase := range []backendPhase{phaseConfig, phasePlugins, phaseDsh, phaseReady, phaseRelay, phaseRemote, phaseRestarting} {
+		label := startupLoadingState(backendStatus{Phase: phase}, false).Phase
+		if !strings.Contains(startupLoadingScript, "'"+label+"'") {
+			t.Fatalf("加载页脚本的 labels 数组缺少阶段 %s 的文案 %q", phase, label)
+		}
+	}
+}
+
 func TestStartupRoutesAndContentPolicy(t *testing.T) {
 	manager := newTestManager()
 	manager.setStatus(startupReadyStatus())

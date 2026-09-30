@@ -17,17 +17,26 @@ profile 的 `dependencies` 是第三方 Bundle 是否安装的事实，`dsh.prof
 启用的事实，profile patch 中目标行的 `disabled` 则是组件是否停用的事实，三者不能混用。
 项目首次默认安装第三方 Bundle，配套升级只处理仍在 dependencies 中的包，并保留后两种状态；
 卸载后不得仅凭“默认清单”重新加入 dependency 或 bundles。
-升级判定用状态文件（`dsh-station-bundles-state.json`）记录的介质版本与内容指纹（目录树
-路径+字节的 sha256）：两者与介质一致且 profile `node_modules` 链接完好时启动跳过介质物化
-与 pnpm（快路径）；版本或内容变化、链接缺失、迁移走完整路径。指纹覆盖了开发栈每次构建
-重写 `.dev/plugins` 的同版本变化，因此开发栈不再需要强制刷新参数；旧状态文件没有指纹，
-升级后第一次运行会走一次完整路径补齐。
+升级判定用状态文件（`dsh-station-bundles-state.json`）记录的介质版本与内容指纹：
+两者与介质一致且 profile `node_modules` 链接完好时启动跳过介质物化
+与 pnpm（快路径）；版本或内容变化、链接缺失、迁移或上次同步中断走完整路径。
+指纹优先取介质生成时随 `catalog.json` 一并写出的 `stamp.json`（一次小文件读取，
+算法与 launcher 回退哈希共用 `packages/launcher/src/media-stamp.ts`）；清单缺失或
+条目不全才逐字节哈希介质树，删除 `stamp.json` 可强制回退逐字节校验。
+指纹覆盖了开发栈每次构建重写 `.dev/plugins` 的同版本变化；旧状态文件没有指纹，
+升级后第一次运行会走一次完整路径补齐。完整路径只重装**实际变化**的仍安装条目
+（版本或指纹变化者）；版本与指纹都未变、链接完好的条目沿用现有安装副本，
+但其运行时依赖闭包仍按「安装项 ∪ 沿用项」重建——profile 依赖以 link: 指向
+缓存目录，沿用条目在运行期仍从缓存解析依赖。包管理器主版本迁移会重建整个
+node_modules，届时沿用条目回到完整重装列表。
 
 项目介质物化由 `packages/launcher/src/plugin-copy.ts` 以最多 8 路文件操作复制，普通依赖仍是
 真实文件；仅 pi-ai/http-proxy 保持原有共享模块链接，不改变安装布局或依赖版本。
 失败后停止派发并等待在途写入结束；profile 根的 `.dsh-station-plugin-media.pending` 在修改缓存前写入，
 复制、官方安装和状态提交全部成功才移除。标记存在时禁止快路径，但保留旧 offered/停用/卸载状态，
-避免重试自动补回用户已卸载的包。完成阶段耗时仅输出到 launcher 日志，不进入加载页状态协议。
+避免重试自动补回用户已卸载的包。慢路径各步骤开始时（复制介质/准备依赖/包管理器安装）经
+状态行 `pluginStage` 标记上报，桌面加载页只把它映射为固定文案（未知标记沿用阶段默认文案）；
+阶段耗时数值仍只输出到 launcher 日志，不进入加载页状态协议。
 
 profile patch 执行时，末尾 overlay 插入的行还不存在，所以覆盖普通项目插件 config 需要更靠后的 patch，
 且目标行必须有稳定 id。用户可编辑的插件字段通过带 volatile Config 的插件行和 configForms 写入；

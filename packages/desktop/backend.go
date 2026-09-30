@@ -56,6 +56,9 @@ type backendWireMessage struct {
 	// DshToken 只经 stdout 管道传输；本机模式下壳在顶层认证交接
 	// 与「在浏览器中打开」时代发一次 dsh 的 /?token= 交换（D25）。
 	DshToken string `json:"dshToken"`
+	// PluginStage 是 plugins 阶段的子步骤标记（copy/deps/install）；
+	// 只映射为加载页固定文案，未知值视同缺省。
+	PluginStage string `json:"pluginStage"`
 	// RemoteEnabled 表示按需启用的本机转发链路已就绪；启用中仍为 false，成功后 Local 指向 relay。
 	RemoteEnabled bool   `json:"remoteEnabled"`
 	RemoteState   string `json:"remoteState"`
@@ -64,12 +67,13 @@ type backendWireMessage struct {
 
 // backendStatus 是 tray/状态页消费的快照；字段全部只读。
 type backendStatus struct {
-	Phase      backendPhase
-	Detail     string
-	HasURLs    bool
-	URLs       backendURLs
-	AdminReady bool
-	DshToken   string
+	Phase       backendPhase
+	Detail      string
+	PluginStage string
+	HasURLs     bool
+	URLs        backendURLs
+	AdminReady  bool
+	DshToken    string
 	// RemoteEnabled 且 relay 可达时走 relay 入口；否则 ready + DshToken 直连 dsh。
 	RemoteEnabled bool
 	RemoteState   string
@@ -244,6 +248,7 @@ func (m *backendManager) applyLine(payload string) {
 		status := backendStatus{
 			Phase:         message.Phase,
 			Detail:        message.Detail,
+			PluginStage:   message.PluginStage,
 			AdminReady:    message.AdminReady,
 			DshToken:      message.DshToken,
 			RemoteEnabled: message.RemoteEnabled,

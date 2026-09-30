@@ -72,6 +72,9 @@ func main() {
 		return
 	}
 
+	// 启动计时只写日志，不参与任何启动决策；用于定位“双击到进入工作台”的耗时分布。
+	startupStarted := time.Now()
+
 	var window, stopTray atomic.Value
 	currentWindow := func() context.Context {
 		if value := window.Load(); value != nil {
@@ -91,6 +94,7 @@ func main() {
 		}
 		defer release()
 	}
+	log.Printf("[启动计时] 单实例检查完成 +%v", time.Since(startupStarted).Round(time.Millisecond))
 
 	var manager *backendManager
 	var discoveryFailure error
@@ -127,6 +131,7 @@ func main() {
 	if manager != nil {
 		manager.onChange = func(status backendStatus) {
 			if status.Phase != lastPhase.Swap(status.Phase).(backendPhase) {
+				log.Printf("[启动计时] 后台阶段 %s +%v", status.Phase, time.Since(startupStarted).Round(time.Millisecond))
 				if status.Phase == phaseReady || status.Phase == phaseFailed || status.Phase == phaseOffline {
 					if ctx := currentWindow(); ctx != nil {
 						runtime.WindowShow(ctx)
@@ -150,6 +155,7 @@ func main() {
 			manager.setStatus(backendStatus{Phase: phaseFailed, Detail: startErr.Error()})
 		} else {
 			defer manager.StopAndWait()
+			log.Printf("[启动计时] 后台进程已拉起 +%v", time.Since(startupStarted).Round(time.Millisecond))
 			urls, handshakeErr := manager.waitForURLConfig(5 * time.Second)
 			if handshakeErr != nil {
 				manager.StopAndWait()
@@ -157,6 +163,7 @@ func main() {
 			} else {
 				initialURLs = urls
 				origin, _ = backendBindingOrigins(urls)
+				log.Printf("[启动计时] 地址握手完成 +%v", time.Since(startupStarted).Round(time.Millisecond))
 			}
 		}
 	}
@@ -211,6 +218,7 @@ func main() {
 		Bind: []interface{}{chrome}, BindingsAllowedOrigins: origin,
 		AssetServer: &assetserver.Options{Handler: initialHandler},
 		OnStartup: func(ctx context.Context) {
+			log.Printf("[启动计时] WebView2 就绪 +%v", time.Since(startupStarted).Round(time.Millisecond))
 			window.Store(ctx)
 			runtime.WindowShow(ctx)
 			installNotifyActivation(currentWindow)
@@ -258,6 +266,10 @@ func main() {
 			}
 		},
 		OnDomReady: func(ctx context.Context) {
+			// 启动前两分钟内记录每次导航就绪，覆盖加载页与交接后的真实工作台。
+			if elapsed := time.Since(startupStarted); elapsed < 2*time.Minute {
+				log.Printf("[启动计时] 页面就绪（OnDomReady） +%v", elapsed.Round(time.Millisecond))
+			}
 			setWindowsTaskbarIcon()
 			if manager != nil {
 				status := manager.Status()

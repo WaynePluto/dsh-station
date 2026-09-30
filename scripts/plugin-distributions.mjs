@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mediaDirectoryStamp, mediaStampFileContent } from '../packages/launcher/src/media-stamp.ts'
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CATALOG_FILE = 'plugin-catalog.json'
@@ -102,6 +103,11 @@ export function materializePluginDistributions(options = {}) {
         components: distribution.components,
       })
     }
+    // 指纹清单随介质一并生成：launcher 启动时读取它即可完成一致性校验，
+    // 不必每次启动逐字节哈希整棵介质树。算法与 launcher 的回退哈希共用同一实现。
+    writeFileSync(join(temporary, 'stamp.json'), mediaStampFileContent(Object.fromEntries(
+      generated.map(entry => [entry.name, mediaDirectoryStamp(join(temporary, entry.directory))]),
+    )))
     writeFileSync(join(temporary, 'catalog.json'), `${JSON.stringify({ schemaVersion: 1, plugins: generated }, undefined, 2)}\n`)
     writeFileSync(join(temporary, 'README.txt'), [
       'dsh-station 随附插件',

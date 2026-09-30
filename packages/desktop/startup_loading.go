@@ -46,6 +46,17 @@ func startupLoadingState(status backendStatus, expired bool) startupLoadingPaylo
 	case phaseRestarting:
 		label = "正在重启 dsh…"
 	}
+	// 插件同步慢路径的子步骤；只认 launcher 状态行的固定标记，未知值沿用阶段默认文案。
+	if status.Phase == phasePlugins {
+		switch status.PluginStage {
+		case "copy":
+			label = "正在复制插件文件…"
+		case "deps":
+			label = "正在准备插件依赖…"
+		case "install":
+			label = "正在安装插件…"
+		}
+	}
 	return startupLoadingPayload{State: "starting", Phase: label}
 }
 
@@ -105,7 +116,7 @@ const startupLoadingScript = `(() => {
   const failure = '` + startupLoadingFailure + `';
   const timeoutMessage = '` + startupLoadingTimeout + `';
   const status = document.getElementById('status');
-  const labels = ['正在准备运行环境…', '正在准备插件…', '正在启动 dsh…', '正在准备本机入口…', '正在重启 dsh…'];
+  const labels = ['正在准备运行环境…', '正在准备插件…', '正在复制插件文件…', '正在准备插件依赖…', '正在安装插件…', '正在启动 dsh…', '正在准备本机入口…', '正在重启 dsh…'];
   function fail(detail) {
     document.getElementById('spinner').classList.add('stopped');
     status.textContent = '启动失败';

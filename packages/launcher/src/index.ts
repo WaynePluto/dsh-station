@@ -56,7 +56,7 @@ import { isSelfHub, membershipFilePath, readMembership } from './membership.js'
 import { assertSupportedNodeVersion } from './node-version.js'
 import { DISTRIBUTION_PACKAGE_NAMES } from './plugin-catalog.js'
 import { DSH_STATION_PROFILE_BUNDLES, ensureProfile, profileDirectory, resolveDshHome } from './profile.js'
-import { resolvePluginMediaDirectory, synchronizePluginDistributions } from './plugin-lifecycle.js'
+import { resolvePluginMediaDirectory, synchronizePluginDistributions, type PluginSyncStage } from './plugin-lifecycle.js'
 import { relayArguments, resolveRelayEntry } from './relay.js'
 import { relayAdminInitialized } from './relay-admin.js'
 import { createRemoteLifecycle, type RemoteLifecycle } from './remote-lifecycle.js'
@@ -107,6 +107,7 @@ function reportChildExit(exit: ChildExit): void {
  * @returns 进程退出码。
  */
 export async function run(argv: readonly string[]): Promise<number> {
+  const runStartedAt = performance.now()
   const program = new Command()
     .name('dsh-station')
     .description('启动 dsh、本机控制台与 dsh-station 隧道连接器')
@@ -125,6 +126,8 @@ export async function run(argv: readonly string[]): Promise<number> {
   const localMode = desktop.enabled
   /** 本机模式下已捕获的 dsh token：start-remote 时给 connector，emit 时给壳代发。 */
   let dshTokenValue: string | undefined
+  /** 插件同步慢路径的子步骤标记；仅随 plugins 阶段的状态行携带，进入 dsh 阶段即清除。 */
+  let pluginStage: PluginSyncStage | undefined
   let shuttingDown = false
   let desktopFailed = false
   let desktopPhase: DesktopPhase = 'config'
@@ -140,6 +143,7 @@ export async function run(argv: readonly string[]): Promise<number> {
       phase,
       pid: process.pid,
       ...detail === undefined ? {} : { detail },
+      ...phase === 'plugins' && pluginStage !== undefined ? { pluginStage } : {},
       ...desktopUrls === undefined ? {} : { urls: desktopUrls },
       ...desktopAdminReady === undefined ? {} : { adminReady: desktopAdminReady },
       ...dshTokenValue === undefined ? {} : { dshToken: dshTokenValue },
@@ -338,8 +342,19 @@ export async function run(argv: readonly string[]): Promise<number> {
         packageManager: { command: process.execPath, args: [pnpmCli], version: resolvePnpmVersion(pnpmCli) },
         onOutput: text => process.stdout.write(text),
         onTiming: ({ phase, durationMs }) => say(`插件准备耗时 [${phase}]: ${Math.round(durationMs)}ms`),
+        onStage: stage => {
+          // 子步骤开始即重发状态行；壳只把它映射为加载页固定文案。
+          pluginStage = stage
+          emit('plugins')
+        },
       })
       say(`插件介质：${mediaDirectory}`)
+      if (pluginSync.installed.length > 0 || pluginSync.upgraded.length > 0) {
+        say(`插件安装/升级：${pluginSync.installed.length} 新装、${pluginSync.upgraded.length} 升级。`)
+      }
+      if (pluginSync.unchanged.length > 0) {
+        say(`${pluginSync.unchanged.length} 个插件介质与上次一致，已跳过重装。`)
+      }
       if (pluginSync.migrated) say('已把旧受管 Bundle 迁移为可卸载的第三方插件。')
       if (pluginSync.skippedRemoved.length > 0) say(`${pluginSync.skippedRemoved.join('、')} 已被卸载，本次不自动补回。`)
     } catch (error) {
@@ -349,6 +364,7 @@ export async function run(argv: readonly string[]): Promise<number> {
     }
   }
 
+  pluginStage = undefined
   emit('dsh')
   startDshChild(trustedHosts)
 
@@ -561,6 +577,7 @@ export async function run(argv: readonly string[]): Promise<number> {
     else if (command.type === 'restart-remote') void remote?.restart().catch(reportFailure)
   })
 
+  say(`启动就绪用时 ${Math.round(performance.now() - runStartedAt)}ms`)
   emit('ready')
   return finished
 }

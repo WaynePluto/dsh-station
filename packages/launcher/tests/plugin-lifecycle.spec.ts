@@ -65,6 +65,19 @@ function readManifest(home: string) {
   }
 }
 
+/** 快路径用 profile node_modules 的包存在性校验链接完好；mock 的包管理器不会真的安装。 */
+function createInstalledMocks(directory: string): void {
+  for (const item of PLUGIN_DISTRIBUTIONS) {
+    const target = join(directory, 'node_modules', ...item.name.split('/'))
+    fs.mkdirSync(target, { recursive: true })
+    fs.writeFileSync(join(target, 'package.json'), JSON.stringify({ name: item.name, version: '1.2.3' }))
+  }
+}
+
+function mediaDirectoryName(name: string): string {
+  return name.slice(name.lastIndexOf('/') + 1).replace(/^dsh-plugin-/u, '')
+}
+
 describe('third-party plugin lifecycle', () => {
   it('finds media beside a packaged dist directory before a source-tree fallback', () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-station-media-'))
@@ -477,6 +490,168 @@ describe('third-party plugin lifecycle', () => {
     await synchronizePluginDistributions({ ...options, profileCreated: false })
     expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(false)
     expect(readManifest(home).dsh.profile.bundles).toEqual([...BASE_PROFILE_BUNDLES, ...PLUGIN_DISTRIBUTIONS.map(item => item.name)])
+  })
+
+  it('trusts the generated stamp file for the fast path and falls back to hashing without it', async () => {
+    const { home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    // stamp.json 的值故意不是内容哈希：快路径必须以生成时写出的清单为准，
+    // 而不是每次启动重新逐字节校验介质树。
+    const stamps = Object.fromEntries(PLUGIN_DISTRIBUTIONS.map(item => [item.name, `generated-stamp:${item.name}`]))
+    fs.writeFileSync(join(media, 'stamp.json'), JSON.stringify({ schemaVersion: 1, stamps }))
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    const directory = profileDirectory(home, 'dsh-station-web')
+    createInstalledMocks(directory)
+    runPluginCommand.mockClear()
+
+    const result = await synchronizePluginDistributions({ ...options, profileCreated: false })
+
+    expect(runPluginCommand).not.toHaveBeenCalled()
+    expect(result.unchanged).toEqual([])
+    const state = JSON.parse(fs.readFileSync(join(directory, 'dsh-station-bundles-state.json'), 'utf8')) as {
+      stamps: Record<string, string>
+    }
+    expect(state.stamps[PLUGIN_DISTRIBUTIONS[0]!.name]).toBe(`generated-stamp:${PLUGIN_DISTRIBUTIONS[0]!.name}`)
+
+    // 删除 stamp.json 后回退逐字节哈希：介质从未按内容记录过指纹，必须走完整同步。
+    fs.rmSync(join(media, 'stamp.json'))
+    runPluginCommand.mockClear()
+    const fallback = await synchronizePluginDistributions({ ...options, profileCreated: false })
+    expect(runPluginCommand).toHaveBeenCalledTimes(1)
+    expect(fallback.upgraded).toEqual(PLUGIN_DISTRIBUTIONS.map(item => item.name))
+  })
+
+  it('reinstalls only changed distributions and keeps unchanged ones installed', async () => {
+    const { home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    const directory = profileDirectory(home, 'dsh-station-web')
+    createInstalledMocks(directory)
+    // 开发栈的典型场景：版本号不变，只有一个分发包的内容被重建。
+    const changed = PLUGIN_DISTRIBUTIONS[0]!
+    const changedDirectory = mediaDirectoryName(changed.name)
+    fs.mkdirSync(join(media, changedDirectory, 'dist'), { recursive: true })
+    fs.writeFileSync(join(media, changedDirectory, 'dist', 'index.js'), 'export const rebuilt = true\n')
+    runPluginCommand.mockClear()
+
+    const result = await synchronizePluginDistributions({ ...options, profileCreated: false })
+
+    expect(runPluginCommand).toHaveBeenCalledTimes(1)
+    const args = runPluginCommand.mock.calls[0]?.[1] as string[]
+    expect(args.slice(1)).toHaveLength(1)
+    const addedManifest = JSON.parse(fs.readFileSync(join(args[1] as string, 'package.json'), 'utf8')) as { name: string }
+    expect(addedManifest.name).toBe(changed.name)
+    expect(result.upgraded).toEqual([changed.name])
+    expect(result.unchanged).toEqual(PLUGIN_DISTRIBUTIONS.slice(1).map(item => item.name))
+    // 沿用条目仍是已安装状态，不得被误报为已卸载。
+    expect(result.skippedRemoved).toEqual([])
+    // 沿用条目的版本与指纹并入状态文件：下一次同步整体命中快路径。
+    runPluginCommand.mockClear()
+    const again = await synchronizePluginDistributions({ ...options, profileCreated: false })
+    expect(runPluginCommand).not.toHaveBeenCalled()
+    expect(again.unchanged).toEqual([])
+  })
+
+  it('reinstalls carried distributions when the package manager major version changes', async () => {
+    const { home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    const directory = profileDirectory(home, 'dsh-station-web')
+    createInstalledMocks(directory)
+    fs.writeFileSync(join(directory, 'node_modules', '.modules.yaml'), 'packageManager: pnpm@12.4.1\n')
+    // 一个包版本升级使 install 列表非空，其余条目本来可以沿用。
+    const catalogPath = join(media, 'catalog.json')
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8')) as { plugins: { name: string, version: string }[] }
+    const entry = catalog.plugins.find(item => item.name === PLUGIN_DISTRIBUTIONS[0]!.name)
+    if (entry === undefined) throw new Error('catalog entry missing')
+    entry.version = '1.3.0'
+    fs.writeFileSync(catalogPath, JSON.stringify(catalog))
+    runPluginCommand.mockClear()
+
+    const result = await synchronizePluginDistributions({
+      ...options,
+      profileCreated: false,
+      packageManager: { command: 'node', args: ['pnpm.cjs'], version: '10.17.0' },
+    })
+
+    // 迁移会重建整个 node_modules，所有仍安装条目必须完整重装。
+    expect(result.unchanged).toEqual([])
+    const args = runPluginCommand.mock.calls[0]?.[1] as string[]
+    expect(args.slice(1)).toHaveLength(PLUGIN_DISTRIBUTIONS.length)
+  })
+
+  it('rebuilds the runtime dependency closure for carried distributions', async () => {
+    const { root, home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    // 第一个分发包带运行时依赖；本次只重建另一个分发包的内容。
+    const dependent = PLUGIN_DISTRIBUTIONS[0]!
+    const pluginManifest = JSON.parse(fs.readFileSync(join(media, mediaDirectoryName(dependent.name), 'package.json'), 'utf8')) as Record<string, unknown>
+    pluginManifest.dependencies = { 'runtime-entry': '1.0.0' }
+    fs.writeFileSync(join(media, mediaDirectoryName(dependent.name), 'package.json'), JSON.stringify(pluginManifest))
+    const runtimeModules = join(root, 'runtime-node-modules')
+    fs.mkdirSync(join(runtimeModules, 'runtime-entry'), { recursive: true })
+    fs.writeFileSync(join(runtimeModules, 'runtime-entry', 'package.json'), JSON.stringify({ name: 'runtime-entry', version: '1.0.0' }))
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename,
+      runtimeModulesDirectory: runtimeModules }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    const directory = profileDirectory(home, 'dsh-station-web')
+    createInstalledMocks(directory)
+    const changedDirectory = mediaDirectoryName(PLUGIN_DISTRIBUTIONS[1]!.name)
+    fs.mkdirSync(join(media, changedDirectory, 'dist'), { recursive: true })
+    fs.writeFileSync(join(media, changedDirectory, 'dist', 'index.js'), 'export const rebuilt = true\n')
+    runPluginCommand.mockClear()
+
+    const result = await synchronizePluginDistributions({ ...options, profileCreated: false })
+
+    expect(result.unchanged).toContain(dependent.name)
+    // link: 安装在运行期从缓存闭包解析依赖：沿用条目的依赖必须仍在位。
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media', 'node_modules', 'runtime-entry', 'package.json'))).toBe(true)
+  })
+
+  it('does not carry distributions across an interrupted synchronization', async () => {
+    const { home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename }
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    const directory = profileDirectory(home, 'dsh-station-web')
+    createInstalledMocks(directory)
+    // 模拟上次同步中断：缓存里可能有半成品，介质即使完全一致也不能沿用。
+    fs.writeFileSync(join(directory, '.dsh-station-plugin-media.pending'), 'pending\n')
+    runPluginCommand.mockClear()
+
+    const result = await synchronizePluginDistributions({ ...options, profileCreated: false })
+
+    expect(result.unchanged).toEqual([])
+    const args = runPluginCommand.mock.calls[0]?.[1] as string[]
+    expect(args.slice(1)).toHaveLength(PLUGIN_DISTRIBUTIONS.length)
+    expect(fs.existsSync(join(directory, '.dsh-station-plugin-media.pending'))).toBe(false)
+  })
+
+  it('reports slow-path stage starts and stays silent on the fast path', async () => {
+    const { root, home, media } = fixture()
+    ensureProfile({ home, profile: 'dsh-station-web', bundles: BASE_PROFILE_BUNDLES })
+    // 第一个分发包带运行时依赖，覆盖 copy/deps/install 全部三个子步骤。
+    const manifestPath = join(media, mediaDirectoryName(PLUGIN_DISTRIBUTIONS[0]!.name), 'package.json')
+    const pluginManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    pluginManifest.dependencies = { 'runtime-entry': '1.0.0' }
+    fs.writeFileSync(manifestPath, JSON.stringify(pluginManifest))
+    const runtimeModules = join(root, 'runtime-node-modules')
+    fs.mkdirSync(join(runtimeModules, 'runtime-entry'), { recursive: true })
+    fs.writeFileSync(join(runtimeModules, 'runtime-entry', 'package.json'), JSON.stringify({ name: 'runtime-entry', version: '1.0.0' }))
+    const onStage = vi.fn()
+    const options = { home, profile: 'dsh-station-web', mediaDirectory: media, installAnchor: import.meta.filename,
+      runtimeModulesDirectory: runtimeModules, onStage }
+
+    await synchronizePluginDistributions({ ...options, profileCreated: true })
+    expect(onStage.mock.calls.map(([stage]) => stage)).toEqual(['copy', 'deps', 'install'])
+
+    createInstalledMocks(profileDirectory(home, 'dsh-station-web'))
+    onStage.mockClear()
+    await synchronizePluginDistributions({ ...options, profileCreated: false })
+    expect(onStage).not.toHaveBeenCalled()
   })
 
   it('migrates legacy bundles and preserves component and files removal choices', async () => {

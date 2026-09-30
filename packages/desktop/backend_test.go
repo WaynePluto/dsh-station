@@ -32,6 +32,16 @@ func TestApplyLineAcceptsStatusMessages(t *testing.T) {
 	if status.DshToken != "tok_base64url" || !status.RemoteEnabled {
 		t.Fatalf("本机模式字段解析错误: dshToken=%q remoteEnabled=%v", status.DshToken, status.RemoteEnabled)
 	}
+	// plugins 阶段的子步骤标记随状态行携带；后续无标记状态行不得残留。
+	manager.applyLine(`{"type":"status","protocol":1,"phase":"plugins","pluginStage":"install"}`)
+	status = manager.Status()
+	if status.Phase != phasePlugins || status.PluginStage != "install" {
+		t.Fatalf("插件子步骤解析错误: %+v", status)
+	}
+	manager.applyLine(`{"type":"status","protocol":1,"phase":"dsh"}`)
+	if status = manager.Status(); status.PluginStage != "" {
+		t.Fatalf("无标记状态行不得保留旧子步骤: %+v", status)
+	}
 	// 非 ready 阶段不带 urls 时不得残留上一阶段的 URL。
 	manager.applyLine(`{"type":"status","protocol":1,"phase":"restarting"}`)
 	status = manager.Status()

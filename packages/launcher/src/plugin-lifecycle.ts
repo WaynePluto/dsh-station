@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire, findPackageJSON } from 'node:module'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -9,6 +9,7 @@ import type { PluginDistribution } from './plugin-catalog.js'
 import { PLUGIN_DISTRIBUTIONS } from './plugin-catalog.js'
 import { LauncherError } from './errors.js'
 import { copyPluginTrees, type PluginCopyTree } from './plugin-copy.js'
+import { mediaDirectoryStamp, readMediaStampFile } from './media-stamp.js'
 import { DSH_BASE_BUNDLE, DSH_WEB_APP_BUNDLE, profileDirectory } from './profile.js'
 
 const STATE_FILE = 'dsh-station-bundles-state.json'
@@ -47,11 +48,16 @@ export interface PluginSyncTiming {
   readonly durationMs: number
 }
 
+/** 慢路径各步骤开始时上报的子步骤标记；供桌面加载页映射固定文案。 */
+export type PluginSyncStage = 'copy' | 'deps' | 'install'
+
 type TimingReporter = (timing: PluginSyncTiming) => void
 
 export interface PluginSyncResult {
   readonly installed: readonly string[]
   readonly upgraded: readonly string[]
+  /** 已安装且介质与上次同步完全一致、本次跳过重装的条目。 */
+  readonly unchanged: readonly string[]
   readonly skippedRemoved: readonly string[]
   readonly migrated: boolean
 }
@@ -123,29 +129,9 @@ function readState(directory: string): LifecycleState | { readonly ensured: read
 }
 
 /**
- * 介质目录的内容指纹：目录树内全部相对路径与文件字节一并哈希。
- * 开发栈每次构建都会重写 `.dev/plugins`，版本号不变内容也会变，
- * 因此快路径不能只比对版本；目录按名称排序保证不同平台遍历顺序稳定。
+ * 单个介质目录的内容指纹由 media-stamp.ts 提供；本文件优先消费介质生成时
+ * 写出的 stamp.json，缺失或条目不全时回退为逐字节哈希。
  */
-function directoryStamp(directory: string): string {
-  const hash = createHash('sha256')
-  const walk = (current: string, prefix: string): void => {
-    const entries = fs.readdirSync(current, { withFileTypes: true })
-      .toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    for (const entry of entries) {
-      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
-      hash.update(`${relative}\0`)
-      if (entry.isDirectory()) {
-        walk(join(current, entry.name), relative)
-        continue
-      }
-      // 符号链接按目标内容哈希（readFileSync 跟随链接），与物化复制语义一致。
-      if (entry.isFile() || entry.isSymbolicLink()) hash.update(fs.readFileSync(join(current, entry.name)))
-    }
-  }
-  walk(directory, '')
-  return hash.digest('hex')
-}
 
 function readMedia(directory: string): readonly MediaEntry[] {
   const raw = readJson(join(directory, 'catalog.json'))
@@ -272,27 +258,37 @@ async function copyRuntimeDependencyClosure(
   onTiming?.({ phase: 'dependency-copy', durationMs: performance.now() - copyStarted })
 }
 
+/**
+ * 物化本次要安装的介质，并按「安装项 ∪ 未变沿用项」重建共享的运行时依赖闭包。
+ * profile 的依赖以 link: 指向缓存目录，未重装的条目在运行期仍从
+ * cache/node_modules 解析依赖，因此闭包的覆盖面必须包含它们。
+ */
 async function materializeProfileMedia(
   directory: string,
-  media: readonly MediaEntry[],
+  install: readonly MediaEntry[],
+  closure: readonly MediaEntry[],
   runtimeModulesDirectory: string | undefined,
   installAnchor: string,
   onTiming: TimingReporter | undefined,
+  onStage: ((stage: PluginSyncStage) => void) | undefined,
 ): Promise<readonly MediaEntry[]> {
   const started = performance.now()
   const cache = join(directory, PROFILE_MEDIA_DIRECTORY)
   fs.mkdirSync(cache, { recursive: true })
-  const result = media.map((entry) => {
+  const result = install.map((entry) => {
     const target = join(cache, basename(entry.directory))
     // dsh 尚未启动，直接刷新缓存可避开 Windows 对含嵌套包目录 rename 的限制。
     fs.rmSync(target, { recursive: true, force: true })
     return { ...entry, directory: target }
   })
-  await copyPluginTrees(result.map((entry, index) => ({ source: (media[index] as MediaEntry).directory, target: entry.directory })))
+  if (result.length > 0) {
+    await copyPluginTrees(result.map((entry, index) => ({ source: (install[index] as MediaEntry).directory, target: entry.directory })))
+  }
   onTiming?.({ phase: 'plugin-copy', durationMs: performance.now() - started })
-  const dependencies = runtimeDependencyNames(result)
+  const dependencies = runtimeDependencyNames(closure)
   if (dependencies.size > 0) {
     if (runtimeModulesDirectory === undefined) throw new Error('没有提供随包运行时依赖目录')
+    onStage?.('deps')
     const targetModules = join(cache, 'node_modules')
     fs.rmSync(targetModules, { recursive: true, force: true })
     fs.mkdirSync(targetModules, { recursive: true })
@@ -414,11 +410,12 @@ export async function synchronizePluginDistributions(options: {
   readonly profile: string
   readonly mediaDirectory: string
   readonly installAnchor: string
-  readonly runtimeModulesDirectory?: string
+  readonly runtimeModulesDirectory?: string | undefined
   readonly profileCreated: boolean
   readonly packageManager?: PackageManagerCommand
   readonly onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
   readonly onTiming?: TimingReporter
+  readonly onStage?: ((stage: PluginSyncStage) => void) | undefined
 }): Promise<PluginSyncResult> {
   const started = performance.now()
   const directory = profileDirectory(options.home, options.profile)
@@ -440,21 +437,38 @@ export async function synchronizePluginDistributions(options: {
   const hasLegacySelection = PLUGIN_DISTRIBUTIONS.some(item => item.components.some(component => selected.has(component.name)))
   const migrate = currentState === undefined && (legacyEnsured.size > 0 || hasLegacySelection)
 
+  // 介质生成时写出的指纹清单：命中时启动校验只需一次小文件读取。
+  const mediaStamps = readMediaStampFile(options.mediaDirectory)
+  const interrupted = fs.existsSync(pendingPath)
+  /**
+   * 已安装条目与上次成功同步完全一致（版本、指纹、安装链接）时返回可沿用的状态指纹。
+   * 上次同步被中断时缓存里可能有半成品，一律不沿用，走完整重装。
+   */
+  const carriedStamp = (entry: MediaEntry): string | undefined => {
+    if (currentState === undefined || interrupted) return undefined
+    if (currentState.versions[entry.name] !== entry.version) return undefined
+    const stamp = currentState.stamps?.[entry.name]
+    if (typeof stamp !== 'string') return undefined
+    if (stamp !== (mediaStamps?.[entry.name] ?? mediaDirectoryStamp(entry.directory))) return undefined
+    if (!fs.existsSync(join(directory, 'node_modules', ...entry.name.split('/'), 'package.json'))) return undefined
+    return stamp
+  }
+
   // 启动快路径：状态文件记录的版本与介质指纹一致、profile 依赖与链接完好时，
-  // 介质物化和 pnpm 安装无需重复执行，可直接跳过。
-  // 任一条件不满足（新介质条目、版本或内容变化、链接缺失、迁移）走完整路径。
-  if (currentState !== undefined && !migrate && !options.profileCreated && !fs.existsSync(pendingPath)
+  // 介质物化和 pnpm 安装无需重复执行，可直接跳过。指纹优先取介质生成时写出的
+  // stamp.json，缺失或条目不全时才逐字节哈希介质树。
+  // 任一条件不满足（新介质条目、版本或内容变化、链接缺失、迁移、上次同步中断）走完整路径。
+  if (currentState !== undefined && !migrate && !options.profileCreated && !interrupted
     && sourceMedia.every((entry) => {
       if (!currentState.offered.includes(entry.name)) return false
       if (!dependencies.has(entry.name)) return true
-      if (currentState.versions[entry.name] !== entry.version) return false
-      if (currentState.stamps?.[entry.name] !== directoryStamp(entry.directory)) return false
-      return fs.existsSync(join(directory, 'node_modules', ...entry.name.split('/'), 'package.json'))
+      return carriedStamp(entry) !== undefined
     })) {
     options.onTiming?.({ phase: 'check', durationMs: performance.now() - started })
     return {
       installed: [],
       upgraded: [],
+      unchanged: [],
       skippedRemoved: sourceMedia
         .filter(entry => currentState.offered.includes(entry.name) && !dependencies.has(entry.name))
         .map(entry => entry.name),
@@ -465,14 +479,14 @@ export async function synchronizePluginDistributions(options: {
   options.onTiming?.({ phase: 'check', durationMs: performance.now() - started })
   // 保留旧 offered 状态；中断标记阻止半成品在下次启动误入快路径。
   writeTextAtomically(pendingPath, 'pending\n')
-  // profile 可能与安装介质分处不同 Windows 盘符；先复制到同盘缓存再交给 pnpm 建 link。
-  const media = await materializeProfileMedia(directory, sourceMedia, options.runtimeModulesDirectory, options.installAnchor, options.onTiming)
   const offered = new Set(currentState?.offered ?? [])
   const install: MediaEntry[] = []
   const enabled = new Set<string>()
   const disabledRows: { rowId: string }[] = []
+  // 同版本且介质指纹未变、沿用现有安装副本的条目：包名到可沿用的状态指纹。
+  const carried = new Map<string, string>()
 
-  for (const entry of media) {
+  for (const entry of sourceMedia) {
     const known = offered.has(entry.name)
     const alreadyInstalled = dependencies.has(entry.name)
     const newlyOffered = !known && !migrate
@@ -495,6 +509,16 @@ export async function synchronizePluginDistributions(options: {
     } else if (known && !alreadyInstalled) {
       shouldInstall = false
       shouldEnable = false
+    } else if (alreadyInstalled && !newlyOffered) {
+      // 配套升级只重装实际变化的条目：版本与介质指纹都未变、安装链接完好的
+      // 条目沿用现有安装副本，跳过介质物化与包管理器重装。
+      const stamp = carriedStamp(entry)
+      if (stamp !== undefined) {
+        shouldInstall = false
+        carried.set(entry.name, stamp)
+        // 沿用条目保持现有启用状态，bundle 行不因跳过重装而丢失。
+        if (selected.has(entry.name)) enabled.add(entry.name)
+      }
     }
 
     offered.add(entry.name)
@@ -502,7 +526,7 @@ export async function synchronizePluginDistributions(options: {
     if (shouldInstall && shouldEnable) enabled.add(entry.name)
   }
 
-  const installedBefore = new Set(media.filter(entry => dependencies.has(entry.name)).map(entry => entry.name))
+  const installedBefore = new Set(sourceMedia.filter(entry => dependencies.has(entry.name)).map(entry => entry.name))
   const { version: packageManagerVersion, ...packageManager } = options.packageManager ?? {}
   const existingPackageManager = profilePackageManager(directory)
   const needsPackageManagerMigration = install.length > 0
@@ -515,16 +539,30 @@ export async function synchronizePluginDistributions(options: {
       `[dsh-station] Profile 由 ${existingPackageManager} 安装，正在用随包 pnpm@${packageManagerVersion} 重建依赖链接。\n`,
       'stdout',
     )
+    // 迁移会重建整个 node_modules，收窄沿用的条目必须回到完整重装列表。
+    for (const entry of sourceMedia) {
+      if (!carried.has(entry.name)) continue
+      carried.delete(entry.name)
+      install.push(entry)
+      if (selected.has(entry.name)) enabled.add(entry.name)
+    }
   }
+  // profile 可能与安装介质分处不同 Windows 盘符；先复制到同盘缓存再交给 pnpm 建 link。
+  // 运行时依赖闭包覆盖安装项与沿用项：沿用的 link: 安装仍在运行期解析这些依赖。
+  const closure = [...install, ...sourceMedia.filter(entry => carried.has(entry.name))]
+  if (install.length > 0) options.onStage?.('copy')
+  const materialized = await materializeProfileMedia(directory, install, closure,
+    options.runtimeModulesDirectory, options.installAnchor, options.onTiming, options.onStage)
   if (install.length > 0) {
     const installStarted = performance.now()
+    options.onStage?.('install')
     const result = await runPluginCommand({
       profile: options.profile,
       dir: directory,
       home: options.home,
       installAnchor: options.installAnchor,
       cwd: process.cwd(),
-    }, ['add', ...install.map(entry => entry.directory)], {
+    }, ['add', ...materialized.map(entry => entry.directory)], {
       execution: 'service',
       outputBytes: 64 * 1024,
       activateNewBundles: false,
@@ -540,8 +578,8 @@ export async function synchronizePluginDistributions(options: {
   }
 
   if (migrate) {
-    const groupedComponents = media.flatMap(entry => entry.components)
-      .filter(component => !media.some(candidate => candidate.name === component.name))
+    const groupedComponents = sourceMedia.flatMap(entry => entry.components)
+      .filter(component => !sourceMedia.some(candidate => candidate.name === component.name))
       .map(component => component.name)
       .filter(name => profileManifest(manifestPath).dependencies[name] !== undefined)
     if (groupedComponents.length > 0) {
@@ -567,12 +605,21 @@ export async function synchronizePluginDistributions(options: {
   const after = profileManifest(manifestPath)
   after.dsh.profile.bundles = insertDistributions(after.dsh.profile.bundles, enabled)
   writeTextAtomically(manifestPath, `${JSON.stringify(after, undefined, 2)}\n`)
-  // 指纹从源介质计算：物化副本是逐字节复制，两者一致，而源是快路径比对的对象。
-  const versions = Object.fromEntries(install.map(entry => [entry.name, entry.version]))
-  const stamps = Object.fromEntries(install.map((entry) => {
-    const source = sourceMedia.find(candidate => candidate.name === entry.name)
-    return [entry.name, directoryStamp((source ?? entry).directory)]
-  }))
+  // 指纹优先取介质生成时写出的 stamp.json，缺失时回退逐字节哈希源介质：
+  // 物化副本是逐字节复制，两者一致，而源是快路径比对的对象。沿用条目直接
+  // 带回上次的状态指纹（与当前介质一致已在收窄条件中核实），避免重复哈希。
+  const installNames = new Set(install.map(entry => entry.name))
+  const versions: Record<string, string> = {}
+  const stamps: Record<string, string> = {}
+  for (const entry of sourceMedia) {
+    if (carried.has(entry.name)) {
+      versions[entry.name] = entry.version
+      stamps[entry.name] = carried.get(entry.name) as string
+    } else if (installNames.has(entry.name)) {
+      versions[entry.name] = entry.version
+      stamps[entry.name] = mediaStamps?.[entry.name] ?? mediaDirectoryStamp(entry.directory)
+    }
+  }
   writeTextAtomically(join(directory, STATE_FILE), `${JSON.stringify({
     schemaVersion: 2,
     offered: [...offered],
@@ -585,7 +632,10 @@ export async function synchronizePluginDistributions(options: {
   return {
     installed: install.filter(entry => !installedBefore.has(entry.name)).map(entry => entry.name),
     upgraded: install.filter(entry => installedBefore.has(entry.name)).map(entry => entry.name),
-    skippedRemoved: media.filter(entry => offered.has(entry.name) && !install.includes(entry)).map(entry => entry.name),
+    unchanged: [...carried.keys()],
+    skippedRemoved: sourceMedia
+      .filter(entry => offered.has(entry.name) && !installNames.has(entry.name) && !dependencies.has(entry.name))
+      .map(entry => entry.name),
     migrated: migrate,
   }
 }

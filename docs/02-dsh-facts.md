@@ -12,6 +12,7 @@
 | [会话与消息](dsh/conversation.md) | 重试、投影、原生过程分组、滚动、分叉与通知时序 |
 | [工具与进程](dsh/runtime.md) | 工具注册表、YOLO、常驻服务、PTY、Windows 进程树 |
 | [技能与文件](dsh/workspace.md) | 技能加载历史、全局提示词、工作区边界与只读预览 |
+| [官方桌面应用](dsh/desktop-app.md) | Electron 壳 + Node 宿主的启动时序与提速手段（本项目优化对照基线） |
 
 ## 升级检查
 

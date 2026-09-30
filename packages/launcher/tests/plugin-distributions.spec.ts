@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { materializePluginDistributions } from '../../../scripts/plugin-distributions.mjs'
+import { mediaDirectoryStamp } from '../src/media-stamp.js'
 
 const root = join(import.meta.dirname, '..', '..', '..')
 const temporary: string[] = []
@@ -23,6 +24,14 @@ describe('plugin installation media', () => {
 
     expect(result.plugins).toHaveLength(10)
     expect(existsSync(join(output, 'catalog.json'))).toBe(true)
+    // 指纹清单随介质一并生成，launcher 用它免于每次启动逐字节哈希介质树。
+    const stampFile = JSON.parse(readFileSync(join(output, 'stamp.json'), 'utf8')) as {
+      schemaVersion: number, stamps: Record<string, string>
+    }
+    expect(stampFile.schemaVersion).toBe(1)
+    expect(Object.keys(stampFile.stamps)).toHaveLength(result.plugins.length)
+    const first = result.plugins[0] as { name: string, directory: string }
+    expect(stampFile.stamps[first.name]).toBe(mediaDirectoryStamp(join(output, first.directory)))
     const group = join(output, 'conversation-enhancements')
     expect(lstatSync(group).isDirectory()).toBe(true)
     expect(existsSync(join(

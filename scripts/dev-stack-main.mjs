@@ -275,6 +275,12 @@ const pluginSync = await synchronizePluginDistributions({
   onOutput: text => process.stdout.write(text),
 })
 console.log(`[dsh-station] 开发插件目录：${pluginMediaDirectory}`)
+if (pluginSync.installed.length > 0 || pluginSync.upgraded.length > 0) {
+  console.log(`[dsh-station] 插件安装/升级：${pluginSync.installed.length} 新装、${pluginSync.upgraded.length} 升级。`)
+}
+if (pluginSync.unchanged.length > 0) {
+  console.log(`[dsh-station] ${pluginSync.unchanged.length} 个插件介质与上次一致，已跳过重装。`)
+}
 if (pluginSync.migrated) console.log('[dsh-station] 已把旧受管 Bundle 迁移为第三方插件。')
 if (pluginSync.skippedRemoved.length > 0) {
   console.log(`[dsh-station] 已卸载且未自动补回：${pluginSync.skippedRemoved.join('、')}`)

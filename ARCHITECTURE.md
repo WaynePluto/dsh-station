@@ -134,7 +134,11 @@ graph TD
   权威清单。组合包保留组件行开关；model-enhancements 的 models-catalog 与
   model-capabilities 共同参与 `llm-pi-ai` 启动屏障，不可单独停用。directory-picker-browse
   需要静态覆盖原生服务，故独立分发。
-- 新 profile 首次默认安装全部 10 个分发包；后续升级所有仍安装项并保持 Bundle/组件停用。
+- 新 profile 首次默认安装全部 10 个分发包；后续升级仍安装项中实际变化者（版本或介质
+  指纹变化）并保持 Bundle/组件停用，版本与指纹都未变、链接完好的条目沿用现有安装副本
+  跳过重装（运行时依赖闭包仍按安装项 ∪ 沿用项重建）。
+  一致性校验优先读介质生成时写出的 `stamp.json`（`packages/launcher/src/media-stamp.ts`
+  与生成脚本共用算法），缺失才逐字节哈希介质树。
   已卸载包不补回，需要由用户从发行版 `plugins/<目录>` 或开发 `.dev/plugins/<目录>` 经官方
   「添加插件」重装。
 - launcher 在安装前把介质和其运行时依赖复制到 profile 内 `.dsh-station-plugin-media/`，避免 Windows

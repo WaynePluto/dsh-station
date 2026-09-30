@@ -46,6 +46,11 @@ export type DesktopMessage =
     readonly pid: number
     /** 阶段切换时的人读说明；不含凭据。 */
     readonly detail?: string | undefined
+    /**
+     * plugins 阶段的子步骤标记，仅在慢路径各步骤开始时随状态行重发；
+     * 壳只把它映射为固定文案，不接受自由文本。快路径不携带。
+     */
+    readonly pluginStage?: 'copy' | 'deps' | 'install' | undefined
     /** ready 之后始终带上 URL；dsh 端口在 config 阶段即已知。 */
     readonly urls?: DesktopUrls | undefined
     /** 管理员是否已初始化（决定首次打开控制台显示设置向导还是登录页）。 */

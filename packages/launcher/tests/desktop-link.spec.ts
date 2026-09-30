@@ -74,6 +74,20 @@ describe('desktop link', () => {
     expect(parsed.remoteEnabled).toBe(false)
   })
 
+  it('carries the plugin stage marker for loading-page labels', () => {
+    const io = memoryIo()
+    const link = createDesktopLink(['--desktop'], io)
+    link.emit({
+      type: 'status',
+      protocol: 1,
+      phase: 'plugins',
+      pid: 4242,
+      pluginStage: 'install',
+    })
+    const parsed = JSON.parse(io.written[0]?.slice(DESKTOP_LINE_PREFIX.length) ?? '') as Record<string, unknown>
+    expect(parsed.pluginStage).toBe('install')
+  })
+
   it.each([
     { phase: 'ready', remoteState: 'idle', remoteEnabled: false },
     { phase: 'remote', remoteState: 'starting', remoteEnabled: false },
