@@ -59,6 +59,9 @@ func TestBuildChromeBarScript(t *testing.T) {
 	if !strings.Contains(script, `dsh-station-chromebar`) {
 		t.Fatal("脚本缺少自绘标题栏元素 ID")
 	}
+	if !strings.Contains(script, `['关于 DSH 工作站',call('ShowAbout')]`) {
+		t.Fatal("工作站菜单缺少「关于 DSH 工作站」入口")
+	}
 
 	if !strings.Contains(script, `document.body.style.paddingTop='calc(36px + var(--dsh-station-page-top-gap, 0px))'`) ||
 		!strings.Contains(script, `document.body.style.boxSizing='border-box'`) {

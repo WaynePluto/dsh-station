@@ -126,9 +126,13 @@ launcher 以 `--desktop` 运行时（`packages/launcher/src/desktop-link.ts`）�
 标题栏观察管理页与原生dsh的主题属性，并响应系统配色及页面恢复可见；不观察整个DOM子树。
 脚本带 `location.origin` 守卫，只在握手确认的 dsh/relay 页面注入；资产页和临时加载页不获得绑定。
 `转到` 菜单含工作台/远程管理（页面内切换）与「在浏览器中打开」回退；`工作站` 菜单含
-重新加载、隐藏到托盘与退出（与状态页「远程管理」、托盘子菜单用词一致）；窗口控制是「业务页零 Go
+重新加载、隐藏到托盘、退出与「关于 DSH 工作站」（与状态页「远程管理」、托盘子菜单用词一致）。
+「关于」弹出原生信息对话框，显示工作站/dsh/Node（随包或系统）/Wails/Go/操作系统版本
+（`about.go` 首次打开时按需解析并缓存：载荷包根与 dsh 的 package.json、实际 node
+可执行文件、Go 构建信息；attach 模式没有托管载荷，相应字段显示未知，Node 回退系统 PATH）。
+窗口控制是「业务页零 Go
 bindings」的书面例外：`Chrome` 绑定只有 Minimize/ToggleMaximize/Hide/Quit/
-OpenHome/OpenAdmin/OpenExternalHome/OpenExternalAdmin 八个无参方法，管理方法走同一按需
+OpenHome/OpenAdmin/OpenExternalHome/OpenExternalAdmin/ShowAbout 九个无参方法，管理方法走同一按需
 启动链。`BindingsAllowedOrigins` 使用握手中的 dsh/relay 精确来源，无通配符、不硬编码端口，
 不接受任意 URL/命令/文件参数。Wails v2.16 的 `window.go` 只存在于资产服务器主页面，
 因此标题栏经 WebView2 `window.chrome.webview.postMessage('C'+{...})` 发送固定格式的绑定调用；

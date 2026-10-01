@@ -100,6 +100,8 @@ func main() {
 	var discoveryFailure error
 	notifyToken := ""
 	relayURL, adminURL := config.relayURL, config.adminURL
+	// 关于弹窗按需读取载荷包根与实际 Node 的版本；attach 模式没有托管载荷。
+	about := newAboutDialog(nil)
 	if config.mode == modeStandalone {
 		relayURL, adminURL = "http://127.0.0.1:30809/", "http://127.0.0.1:30809/_admin"
 		payload, discoveryErr := payloadFor(config)
@@ -109,11 +111,12 @@ func main() {
 			notifyToken = newNotifyToken()
 		}
 		manager = newBackendManager(payload, notifyToken, nil)
+		about = newAboutDialog(&payload)
 		if discoveryErr != nil {
 			manager.setStatus(backendStatus{Phase: phaseFailed, Detail: discoveryErr.Error()})
 		}
 	}
-	chrome := &Chrome{currentWindow: currentWindow, resolve: func() (string, string) {
+	chrome := &Chrome{currentWindow: currentWindow, about: about.Show, resolve: func() (string, string) {
 		if manager != nil {
 			if status := manager.Status(); status.HasURLs {
 				home := status.URLs.Local

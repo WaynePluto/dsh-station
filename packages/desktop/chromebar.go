@@ -23,6 +23,9 @@ type Chrome struct {
 	// 上报后才确定；attach 模式返回启动参数里的静态地址。
 	resolve func() (home string, admin string)
 	admin   func(external bool)
+	// about 弹出「关于 DSH 工作站」版本信息对话框；由 main 装配，
+	// 标题栏不持有载荷细节。
+	about func(ctx context.Context)
 }
 
 func (c *Chrome) Minimize() {
@@ -75,6 +78,14 @@ func (c *Chrome) OpenHome() {
 	if ctx := c.currentWindow(); ctx != nil {
 		home, _ := c.resolve()
 		navigateWindow(ctx, home)
+	}
+}
+
+// ShowAbout 弹出原生「关于 DSH 工作站」对话框，展示工作站、dsh、Node、
+// Wails、Go 与操作系统的版本；只读，不影响后台。
+func (c *Chrome) ShowAbout() {
+	if ctx := c.currentWindow(); ctx != nil && c.about != nil {
+		c.about(ctx)
 	}
 }
 
@@ -196,7 +207,9 @@ const chromebarScript = `(function(){
     ['重新加载',function(){location.reload()}],
     ['-'],
     ['隐藏到托盘',call('Hide')],
-    ['退出',call('Quit')]
+    ['退出',call('Quit')],
+    ['-'],
+    ['关于 DSH 工作站',call('ShowAbout')]
   ]));
   var spacer=document.createElement('div');
   spacer.style.cssText='flex:1;height:100%';
